@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=live-dictate
+GenericName=Voice Dictation
+Comment=Set up push-to-talk dictation
+Exec=live-dictate setup
+Icon=audio-input-microphone
+Terminal=false
+Categories=Utility;Accessibility;
+Keywords=dictation;voice;speech;transcription;

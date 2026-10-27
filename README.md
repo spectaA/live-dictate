@@ -30,20 +30,12 @@ Download the latest `.deb` from the [releases page](https://github.com/spectaA/l
 
 ```bash
 sudo apt install ./live-dictate_*_amd64.deb
+live-dictate setup
 ```
 
-Store your OpenAI API key in the GNOME keyring:
+The setup window asks for your OpenAI API key, checks it, and lets you pick your language and hotkey. The key is stored in your GNOME keyring, never in a file.
 
-```bash
-secret-tool store --label='live-dictate' service live-dictate account openai
-```
-
-Check the setup, then start live-dictate now and at every login:
-
-```bash
-live-dictate check --api
-systemctl --user enable --now live-dictate
-```
+live-dictate then starts by itself at every login. If you skip `live-dictate setup`, the same window opens at your next login. You can reopen it at any time from the applications menu (**live-dictate**) or with `live-dictate setup`.
 
 ## Usage
 
@@ -61,6 +53,8 @@ The overlay shows what is happening:
 Commands:
 
 ```bash
+live-dictate setup             # change the API key, language or hotkey
+live-dictate check --api       # diagnose tools, key, microphone and the cleanup call
 live-dictate run --dry-run     # print the text instead of pasting it
 live-dictate run --no-cleanup  # paste the raw transcript
 live-dictate -v run            # debug logs (never include your API key)
@@ -70,12 +64,12 @@ live-dictate update            # install the latest release
 
 ## Configuration
 
-Settings live in `~/.config/live-dictate/config.toml`. Every key is optional.
+`live-dictate setup` covers the common settings. Everything else lives in `~/.config/live-dictate/config.toml`, where every key is optional.
 
 ```toml
 hotkey = "<ctrl_r>"                     # pynput syntax, e.g. "<ctrl>+<alt>+d"
 mode = "hold"                           # "hold" (push-to-talk) or "toggle"
-languages = ["en"]                      # language hints; empty means auto-detect
+languages = ["en"]                      # defaults to your system language; [] auto-detects
 transcription_model = "gpt-live-transcribe"
 transcription_delay = "low"             # minimal, low, medium, high, xhigh
 transcription_prompt = ""               # context, e.g. "Software engineering stand-up"
@@ -103,7 +97,7 @@ Restart the service after editing the file: `systemctl --user restart live-dicta
 ## Troubleshooting
 
 - **Nothing happens when I hold the key**: run `live-dictate check`, then `journalctl --user -u live-dictate -n 50`.
-- **"already running"**: only one instance can run. Stop the service before running `live-dictate run` by hand.
+- **"already running"**: only one instance can run. Run `systemctl --user stop live-dictate` before `live-dictate run`.
 - **Text is not pasted in one application**: add its class to `terminal_classes` if it is a terminal, or open an issue.
 
 ## Development

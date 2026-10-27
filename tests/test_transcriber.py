@@ -30,7 +30,8 @@ def test_session_update_uses_languages_and_disables_turn_detection() -> None:
 
 
 def test_session_update_omits_empty_optional_fields() -> None:
-    transcription = build_session_update(Config())["session"]["audio"]["input"]["transcription"]
+    session = build_session_update(Config(languages=[]))
+    transcription = session["session"]["audio"]["input"]["transcription"]
     assert "prompt" not in transcription
     assert "keywords" not in transcription
     assert "languages" not in transcription

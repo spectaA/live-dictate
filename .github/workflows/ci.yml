@@ -77,11 +77,15 @@ jobs:
           tar -xzf nfpm.tar.gz nfpm
           sudo install nfpm /usr/local/bin/nfpm
       - run: packaging/build-deb.sh dist
-      - name: Install the package and run it
+      - name: Install, check and remove the package
         run: |
           sudo apt-get update
-          sudo apt-get install --yes ./dist/*.deb
+          sudo apt-get install --yes desktop-file-utils ./dist/*.deb
           live-dictate --version
+          test "$(systemctl --global is-enabled live-dictate.service)" = enabled
+          desktop-file-validate /usr/share/applications/live-dictate.desktop
+          sudo apt-get remove --yes live-dictate
+          test "$(systemctl --global is-enabled live-dictate.service 2>&1 || true)" != enabled
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: deb

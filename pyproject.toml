@@ -84,6 +84,6 @@ module = ["gi", "gi.*", "pynput", "pynput.*", "cairo"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["live_dictate.overlay"]
+module = ["live_dictate.overlay", "live_dictate.setup_window"]
 # GTK classes come from PyGObject introspection and are typed as Any.
 disallow_subclassing_any = false

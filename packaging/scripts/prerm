@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+UNIT=live-dictate.service
+
+if [ "$1" = "remove" ]; then
+    systemctl --global disable "$UNIT" >/dev/null 2>&1 || true
+    for user in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'); do
+        systemctl --user --machine="$user@" stop "$UNIT" >/dev/null 2>&1 || true
+    done
+fi
+
+exit 0

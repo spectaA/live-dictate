@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+import locale
 import os
 import subprocess
 import sys
 from dataclasses import dataclass, field, fields
 from pathlib import Path
+from typing import Any
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -27,11 +30,28 @@ DEFAULT_TERMINAL_CLASSES = (
 )
 
 
+def system_language() -> str | None:
+    """Returns the ISO 639-1 code of the user's locale, e.g. "fr" for fr_BE.UTF-8."""
+    for variable in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        value = os.environ.get(variable)
+        if value:
+            break
+    else:
+        value = locale.getlocale()[0] or ""
+    code = value.split(".")[0].split("_")[0].lower()
+    return code if len(code) == 2 and code.isalpha() else None
+
+
+def _default_languages() -> list[str]:
+    language = system_language()
+    return [language] if language else []
+
+
 @dataclass
 class Config:
     hotkey: str = "<ctrl_r>"
     mode: str = "hold"
-    languages: list[str] = field(default_factory=list)
+    languages: list[str] = field(default_factory=_default_languages)
     transcription_model: str = "gpt-live-transcribe"
     transcription_delay: str = "low"
     transcription_prompt: str = ""
@@ -55,23 +75,47 @@ def default_config_path() -> Path:
     return Path(base) / "live-dictate" / "config.toml"
 
 
-def load_config(path: Path | None) -> Config:
-    path = path or default_config_path()
+def read_config_file(path: Path) -> dict[str, Any]:
     if not path.exists():
-        return Config()
+        return {}
     with path.open("rb") as handle:
         raw = tomllib.load(handle)
     known = {f.name for f in fields(Config)}
     unknown = set(raw) - known
     if unknown:
         raise ValueError(f"Unknown config keys in {path}: {', '.join(sorted(unknown))}")
-    return Config(**raw)
+    return raw
 
 
-def load_api_key() -> str:
-    key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if key:
-        return key
+def load_config(path: Path | None) -> Config:
+    return Config(**read_config_file(path or default_config_path()))
+
+
+def _toml_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, str):
+        # A JSON string is a valid TOML basic string.
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    raise TypeError(f"unsupported config value: {value!r}")
+
+
+def dump_config(values: dict[str, Any]) -> str:
+    return "".join(f"{key} = {_toml_value(value)}\n" for key, value in values.items())
+
+
+def update_config_file(path: Path, updates: dict[str, Any]) -> None:
+    """Merges `updates` into the file, keeping other keys; comments are not preserved."""
+    values = {**read_config_file(path), **updates}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(dump_config(values), encoding="utf-8")
+
+
+def _keyring_lookup() -> str:
     try:
         result = subprocess.run(
             ["secret-tool", "lookup", *KEYRING_ATTRIBUTES],
@@ -81,11 +125,31 @@ def load_api_key() -> str:
             check=False,
         )
     except FileNotFoundError:
-        result = None
-    key = result.stdout.strip() if result else ""
+        return ""
+    return result.stdout.strip()
+
+
+def load_api_key() -> str:
+    key = os.environ.get("OPENAI_API_KEY", "").strip() or _keyring_lookup()
     if not key:
-        raise RuntimeError(
-            "No OpenAI API key: set OPENAI_API_KEY or store it with "
-            f"`secret-tool store --label='live-dictate' {' '.join(KEYRING_ATTRIBUTES)}`"
-        )
+        raise RuntimeError("No OpenAI API key: run `live-dictate setup` or set OPENAI_API_KEY")
     return key
+
+
+def has_api_key() -> bool:
+    try:
+        load_api_key()
+    except RuntimeError:
+        return False
+    return True
+
+
+def store_api_key(key: str) -> None:
+    subprocess.run(
+        ["secret-tool", "store", "--label=live-dictate OpenAI API key", *KEYRING_ATTRIBUTES],
+        input=key,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=True,
+    )

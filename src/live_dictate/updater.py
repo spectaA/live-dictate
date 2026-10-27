@@ -72,8 +72,8 @@ def install_deb(path: Path) -> None:
     command = ["apt-get", "install", "--yes", str(path)]
     if os.geteuid() != 0:
         command.insert(0, "sudo" if sys.stdin.isatty() else "pkexec")
+    # The package's postinst restarts the running daemons of logged-in users.
     subprocess.run(command, check=True)
-    subprocess.run(["systemctl", "--user", "try-restart", SERVICE], check=False)
 
 
 def _download_verified(client: httpx.Client, release: Release, directory: Path) -> Path:

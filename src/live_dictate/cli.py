@@ -6,6 +6,7 @@ import fcntl
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -16,12 +17,13 @@ import httpx
 from . import __version__
 from .audio import Recorder, pcm_duration_ms
 from .cleanup import Cleaner
-from .config import Config, load_api_key, load_config
-from .updater import UpdateError, github_client, update
+from .config import Config, has_api_key, load_api_key, load_config
+from .updater import SERVICE, UpdateError, github_client, update
 
 REQUIRED_TOOLS = ("parec", "xdotool", "xclip", "xprop")
-# Their DEBUG output includes request headers, hence the API key.
-SECRET_LEAKING_LOGGERS = ("websockets", "httpcore", "httpx")
+PACKAGED_UNIT = Path("/usr/lib/systemd/user") / SERVICE
+# Their DEBUG output includes request headers, hence the API key; INFO only adds noise.
+NOISY_HTTP_LOGGERS = ("websockets", "httpcore", "httpx")
 
 
 def _print_output(text: str) -> None:
@@ -99,10 +101,34 @@ def _run(args: argparse.Namespace) -> int:
         print("live-dictate is already running; stop it first (pkill -f live-dictate).")
         return 1
 
+    if not has_api_key():
+        if not os.environ.get("DISPLAY"):
+            print("No OpenAI API key: run `live-dictate setup`.", file=sys.stderr)
+            return 1
+        from .setup_window import run_setup
+
+        if not run_setup(args.config):
+            print("Setup cancelled; live-dictate is not running.")
+            return 0
+
     config = load_config(args.config)
     api_key = load_api_key()
     output = _print_output if args.dry_run else None
     run_app(config, api_key, cleanup=config.cleanup_enabled and not args.no_cleanup, output=output)
+    return 0
+
+
+def _setup(args: argparse.Namespace) -> int:
+    from .setup_window import run_setup
+
+    if not run_setup(args.config):
+        print("Setup cancelled; nothing was changed.")
+        return 0
+    if PACKAGED_UNIT.exists():
+        subprocess.run(["systemctl", "--user", "restart", SERVICE], check=False)
+        print("Saved. live-dictate is running: hold the hotkey and speak.")
+    else:
+        print("Saved. Start live-dictate with `live-dictate run`.")
     return 0
 
 
@@ -133,6 +159,8 @@ def build_parser() -> argparse.ArgumentParser:
     check = commands.add_parser("check", help="verify tools, API key and microphone")
     check.add_argument("--api", action="store_true", help="also send one cleanup request")
 
+    commands.add_parser("setup", help="set the API key, language and hotkey")
+
     upgrade = commands.add_parser("update", help="install the latest release from GitHub")
     upgrade.add_argument("--check", action="store_true", help="only report available updates")
     return parser
@@ -145,11 +173,13 @@ def main() -> None:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    for name in SECRET_LEAKING_LOGGERS:
-        logging.getLogger(name).setLevel(logging.INFO)
+    for name in NOISY_HTTP_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
     if args.command == "check":
         sys.exit(_check(args))
+    if args.command == "setup":
+        sys.exit(_setup(args))
     if args.command == "update":
         sys.exit(_update(args))
     if args.command is None:

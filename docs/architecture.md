@@ -41,4 +41,6 @@ The Debian package targets distributions based on Ubuntu 22.04 with Python 3.10:
 - Python dependencies are installed from `uv.lock`, with hash checking, into `/opt/live-dictate/lib`. They include compiled extensions for the Python 3.10 ABI.
 - GTK, cairo and their Python bindings come from the distribution, which is why they are not on PyPI's dependency list.
 - `/usr/bin/live-dictate` runs `/usr/bin/python3 -s -m live_dictate` with `PYTHONPATH` set to the bundled libraries.
-- A systemd user unit starts the daemon with the graphical session.
+- A systemd user unit starts the daemon with the graphical session. `postinst` enables it with `systemctl --global`, because maintainer scripts run as root and cannot reach a user's session.
+- Per-user state (API key in the keyring, `~/.config/live-dictate/config.toml`) is created by the application, never by the package. On first launch without a key, the daemon opens the setup window instead of failing.
+- On upgrade, `postinst` restarts the daemon of every logged-in user; on removal, `prerm` stops it. Otherwise running daemons would keep executing deleted code.

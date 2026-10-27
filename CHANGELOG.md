@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-27
+
+### Added
+
+- Setup window to enter and verify the OpenAI API key and pick the language and hotkey, opened on first launch and with `live-dictate setup`.
+- Applications menu entry that opens the setup window.
+
+### Changed
+
+- The package enables the service for every user, so live-dictate starts at login without any command.
+- Upgrading the package restarts the daemon of logged-in users, and removing it stops the daemon.
+- The default language follows the system locale.
+
+### Fixed
+
+- HTTP request lines no longer clutter the output of `live-dictate update` and the service logs.
+
 ## [0.1.0] - 2026-10-27
 
 ### Added
@@ -20,5 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `live-dictate update` to install the latest release with checksum verification.
 - Debian package with a systemd user service, built and published by GitHub Actions.
 
-[Unreleased]: https://github.com/spectaA/live-dictate/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/spectaA/live-dictate/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/spectaA/live-dictate/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/spectaA/live-dictate/releases/tag/v0.1.0

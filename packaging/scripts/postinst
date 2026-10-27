@@ -1,0 +1,24 @@
+#!/bin/sh
+set -e
+
+UNIT=live-dictate.service
+
+logged_in_users() {
+    loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'
+}
+
+if [ "$1" = "configure" ]; then
+    # Starts the daemon in every user's graphical session from their next login.
+    systemctl --global enable "$UNIT" >/dev/null 2>&1 || true
+
+    if [ -n "$2" ]; then
+        # Running daemons would otherwise keep executing the previous version's code.
+        for user in $(logged_in_users); do
+            systemctl --user --machine="$user@" try-restart "$UNIT" >/dev/null 2>&1 || true
+        done
+    else
+        echo "live-dictate installed. Run 'live-dictate setup' to configure it and start it now."
+    fi
+fi
+
+exit 0
