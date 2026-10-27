@@ -25,6 +25,7 @@ classifiers = [
 dependencies = [
     "httpx>=0.27",
     "pynput>=1.7",
+    "python-xlib>=0.33",
     "tomli>=2.0; python_version < '3.11'",
     "websockets>=13",
 ]
@@ -82,7 +83,7 @@ strict = true
 files = ["src"]
 
 [[tool.mypy.overrides]]
-module = ["gi", "gi.*", "pynput", "pynput.*", "cairo"]
+module = ["gi", "gi.*", "pynput", "pynput.*", "cairo", "Xlib", "Xlib.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

@@ -30,10 +30,18 @@ CLEAN = (
 
 def _speaking(overlay: Overlay) -> None:
     overlay.listening()
-    overlay._words.update(RAW, time.monotonic() - 5)
-    overlay._level = 0.8
+    overlay._words.update(" ".join(RAW.split()[:-4]), time.monotonic() - 5)
+    overlay._words.update(RAW, time.monotonic() - 0.6)
+    overlay._level = overlay._target_level = 0.8
     overlay._glow = 0.85
     overlay._angle = 1.2
+
+
+def _locked(overlay: Overlay) -> None:
+    _speaking(overlay)
+    overlay._started -= 42
+    overlay.locked()
+    overlay._glow = 0.5
 
 
 def _removing(overlay: Overlay) -> None:
@@ -53,16 +61,22 @@ def _cleaning(overlay: Overlay) -> None:
 def _pasted(overlay: Overlay) -> None:
     _removing(overlay)
     overlay._advance_finish(10)
+    overlay._since -= 0.5
 
 
 def _error(overlay: Overlay) -> None:
-    overlay.error("Connection closed before the final transcript")
+    overlay.error(
+        "Couldn't reach OpenAI",
+        "Connection closed before the final transcript. Nothing was pasted.",
+        settings=True,
+    )
     overlay._glow = 0.35
 
 
 STATES: dict[str, tuple[str | None, Callable[[Overlay], None]]] = {
     "listening": (None, Overlay.listening),
     "live-text": (None, _speaking),
+    "locked": (None, _locked),
     "cleaning": (None, _cleaning),
     "removing": (None, _removing),
     "pasted": (None, _pasted),

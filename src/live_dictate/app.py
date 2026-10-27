@@ -8,10 +8,12 @@ import signal
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import Protocol
 
 from gi.repository import GLib
+from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 from . import history, recent
 from .accent import resolve_accent
@@ -20,10 +22,42 @@ from .cleanup import Cleaner, CleanupResult, needs_cleanup
 from .config import Config, default_history_path
 from .hotkey import HotkeyListener
 from .injector import Injector
+from .keygrab import LOCKED_KEYS, SPACE_KEYS, KeyGrab
 from .overlay import Overlay, level_from_rms
-from .transcriber import LiveTranscriber
+from .transcriber import LiveTranscriber, TranscriptionError
 
 log = logging.getLogger(__name__)
+
+# A press shorter than TAP_S is a tap; a second press within DOUBLE_TAP_S locks the dictation.
+TAP_S = 0.3
+DOUBLE_TAP_S = 0.35
+
+
+class Keys(Protocol):
+    def set(self, keysyms: Iterable[int]) -> None: ...
+
+
+class NoKeys:
+    def set(self, keysyms: Iterable[int]) -> None:
+        pass
+
+
+def space_locks(config: Config) -> bool:
+    return config.mode == "hold" and "<space>" not in config.hotkey
+
+
+def describe_error(error: Exception) -> tuple[str, str, bool]:
+    """Returns the overlay title, the detail line and whether the settings may fix it."""
+    detail = str(error) or type(error).__name__
+    detail = detail[0].upper() + detail[1:].rstrip(".") + ". Nothing was pasted."
+    if isinstance(error, InvalidStatus) and error.response.status_code == 401:
+        return "OpenAI rejected the API key", detail, True
+    network = (OSError, asyncio.TimeoutError, ConnectionClosed, InvalidStatus)
+    if isinstance(error, network) or (
+        isinstance(error, TranscriptionError) and "connection closed" in str(error)
+    ):
+        return "Couldn't reach OpenAI", detail, True
+    return "Something went wrong", detail, False
 
 
 class State(enum.Enum):
@@ -49,6 +83,9 @@ class OverlayBridge:
     def listening(self) -> None:
         self._call(self._overlay.listening)
 
+    def locked(self) -> None:
+        self._call(self._overlay.locked)
+
     def partial(self, text: str) -> None:
         self._call(lambda: self._overlay.partial(text))
 
@@ -64,8 +101,8 @@ class OverlayBridge:
     def hide(self) -> None:
         self._call(self._overlay.hide)
 
-    def error(self, message: str) -> None:
-        self._call(lambda: self._overlay.error(message))
+    def error(self, title: str, detail: str, settings: bool) -> None:
+        self._call(lambda: self._overlay.error(title, detail, settings))
 
 
 class App:
@@ -79,8 +116,13 @@ class App:
         cleanup: bool,
         output: Callable[[str], None] | None,
         recent_path: Path | None = None,
+        keys: Keys | None = None,
     ) -> None:
         self._config = config
+        self._keys = keys or NoKeys()
+        self._locked = False
+        self._pressed_at = 0.0
+        self._tap: asyncio.TimerHandle | None = None
         self._ui = ui
         self._transcriber = LiveTranscriber(api_key, config, self._on_partial)
         self._cleaner = Cleaner(api_key, config) if cleanup else None
@@ -117,13 +159,57 @@ class App:
         if self.paused:
             return
         if self._state is State.IDLE:
+            self._pressed_at = time.monotonic()
             self._start()
-        elif self._state is State.RECORDING and self._config.mode == "toggle":
-            self._finishing = asyncio.create_task(self._finish_recording())
+            if space_locks(self._config):
+                self._keys.set(SPACE_KEYS)
+        elif self._state is State.RECORDING:
+            if self._tap is not None:
+                self._lock()
+            elif self._locked or self._config.mode == "toggle":
+                self._finish()
 
     def on_hotkey_up(self) -> None:
-        if self._state is State.RECORDING and self._config.mode == "hold":
-            self._finishing = asyncio.create_task(self._finish_recording())
+        if self._state is not State.RECORDING or self._config.mode != "hold" or self._locked:
+            return
+        if time.monotonic() - self._pressed_at < TAP_S:
+            self._tap = asyncio.get_running_loop().call_later(DOUBLE_TAP_S, self._tap_expired)
+        else:
+            self._finish()
+
+    def on_space(self) -> None:
+        if self._state is State.RECORDING and not self._locked and space_locks(self._config):
+            self._lock()
+
+    def on_enter(self) -> None:
+        if self._state is State.RECORDING and self._locked:
+            self._finish()
+
+    def _tap_expired(self) -> None:
+        self._tap = None
+        if self._state is State.RECORDING and not self._locked:
+            self._finish()
+
+    def _cancel_tap(self) -> None:
+        if self._tap is not None:
+            self._tap.cancel()
+            self._tap = None
+
+    def _lock(self) -> None:
+        log.info("dictation locked")
+        self._cancel_tap()
+        self._locked = True
+        self._keys.set(LOCKED_KEYS)
+        self._ui.locked()
+
+    def _unlock(self) -> None:
+        self._cancel_tap()
+        self._locked = False
+        self._keys.set(())
+
+    def _finish(self) -> None:
+        self._unlock()
+        self._finishing = asyncio.create_task(self._finish_recording())
 
     def on_escape(self) -> None:
         if self._task and self._state is not State.IDLE:
@@ -209,9 +295,10 @@ class App:
             outcome = "cancelled"
         except Exception as error:
             log.exception("dictation failed")
-            self._ui.error(str(error) or type(error).__name__)
+            self._ui.error(*describe_error(error))
             outcome, error_message = "error", str(error) or type(error).__name__
         finally:
+            self._unlock()
             if saved:
                 self._save_recent(saved, text, outcome)
             else:
@@ -299,8 +386,15 @@ def run_app(
         loop.call_soon_threadsafe(app.pause)
         open_settings(config_path, after_settings)
 
-    ui = OverlayBridge(Overlay(resolve_accent(config.accent_color), on_settings=show_settings))
-    app = App(config, api_key, ui, cleanup, output, recent.default_recent_path())
+    overlay = Overlay(
+        resolve_accent(config.accent_color),
+        on_settings=show_settings,
+        max_lines=config.max_lines,
+        hold=config.mode == "hold",
+        space_locks=space_locks(config),
+    )
+    ui = OverlayBridge(overlay)
+    app = App(config, api_key, ui, cleanup, output, recent.default_recent_path(), KeyGrab())
 
     def dispatch(handler: Callable[[], None]) -> Callable[[], None]:
         def call() -> None:
@@ -313,6 +407,8 @@ def run_app(
         on_down=dispatch(app.on_hotkey_down),
         on_up=dispatch(app.on_hotkey_up),
         on_escape=dispatch(app.on_escape),
+        on_enter=dispatch(app.on_enter),
+        on_space=dispatch(app.on_space),
     )
     hotkeys.start()
 

@@ -73,11 +73,19 @@ def test_first_word_of_a_trimmed_tail() -> None:
 def test_live_words_fade_in_only_new_words() -> None:
     live = LiveWords()
     live.update("hello there", now=0.0)
-    live.update("hello there friend", now=1.0)
-    markup = live.markup(0, now=1.1)
+    live.update("hello there friend", now=1.5)
+    markup = live.markup(0, now=1.6)
     assert markup.startswith("hello there ")
     assert 'alpha="33%"' in markup
     assert "alpha" not in live.markup(0, now=2.0)
+
+
+def test_live_words_highlight_fresh_words() -> None:
+    live = LiveWords()
+    live.update("hello", now=0.0)
+    live.update("hello there", now=1.0)
+    assert live.markup(0, now=1.5) == 'hello <span foreground="#ffffff">there</span>'
+    assert live.markup(0, now=3.0) == "hello there"
 
 
 def test_live_words_escape_markup() -> None:

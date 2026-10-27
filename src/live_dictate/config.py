@@ -18,6 +18,7 @@ else:
 
 KEYRING_ATTRIBUTES = ("service", "live-dictate", "account", "openai")
 CLEANUP_STYLES = ("off", "light", "standard", "polished")
+MAX_LINES_LIMIT = 20
 
 DEFAULT_TERMINAL_CLASSES = (
     "gnome-terminal-server",
@@ -71,6 +72,7 @@ class Config:
     paste_restore_delay_s: float = 0.5
     terminal_classes: list[str] = field(default_factory=lambda: list(DEFAULT_TERMINAL_CLASSES))
     accent_color: str = ""
+    max_lines: int = 4
     history_enabled: bool = False
     history_retention_days: int = 30
 
@@ -86,6 +88,8 @@ class Config:
             raise ValueError(f"cleanup_style must be one of {styles}, got {self.cleanup_style!r}")
         if self.history_retention_days < 1:
             raise ValueError("history_retention_days must be at least 1")
+        if not 1 <= self.max_lines <= MAX_LINES_LIMIT:
+            raise ValueError(f"max_lines must be between 1 and {MAX_LINES_LIMIT}")
         if self.accent_color and not HEX_COLOR.match(self.accent_color):
             raise ValueError(f"accent_color must be empty or #rrggbb, got {self.accent_color!r}")
 

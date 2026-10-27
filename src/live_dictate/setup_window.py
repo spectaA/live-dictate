@@ -22,6 +22,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo  # noqa: E402
 from . import aura, history, recent  # noqa: E402
 from .accent import resolve_accent  # noqa: E402
 from .config import (  # noqa: E402
+    MAX_LINES_LIMIT,
     Config,
     default_config_path,
     default_history_path,
@@ -686,7 +687,13 @@ class SetupWindow(Gtk.Window):
             1,
             1,
         )
-        grid.attach(self._preview, 0, 2, 2, 1)
+        lines = Gtk.Box(spacing=8)
+        self._max_lines = Gtk.SpinButton.new_with_range(1, MAX_LINES_LIMIT, 1)
+        self._max_lines.set_value(self._config.max_lines)
+        lines.pack_start(self._max_lines, False, False, 0)
+        lines.pack_start(_label("lines, older text scrolls away", dim=True), False, False, 0)
+        _add_row(grid, 2, "Live text", lines)
+        grid.attach(self._preview, 0, 3, 2, 1)
         return grid
 
     @property
@@ -734,6 +741,7 @@ class SetupWindow(Gtk.Window):
                     "hotkey": self._hotkey.get_active_id(),
                     "mode": self._mode.get_active_id(),
                     "accent_color": self._accent.value,
+                    "max_lines": self._max_lines.get_value_as_int(),
                     "cleanup_enabled": True,
                     "cleanup_style": self.cleanup_style,
                     "cleanup_min_words": self._min_words.get_value_as_int(),

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-27
+
+### Added
+
+- Lock mode: double-tap the hotkey, or press Space while holding it, to keep dictating hands-free. Enter or the hotkey finishes, Esc cancels. Enter and Esc never reach the focused app while locked.
+- `max_lines` setting, also in the Appearance tab, for the number of live text lines.
+
+### Changed
+
+- Redesigned overlay: line icons, a tinted state disc, a level meter, a timer, keycaps for Space, Enter and Esc, and a progress bar during cleanup.
+- Errors show a short title, the detail and a Settings button when the key or the network is the cause.
+
 ## [0.4.1] - 2026-10-27
 
 ### Added
@@ -82,7 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `live-dictate update` to install the latest release with checksum verification.
 - Debian package with a systemd user service, built and published by GitHub Actions.
 
-[Unreleased]: https://github.com/spectaA/live-dictate/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/spectaA/live-dictate/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/spectaA/live-dictate/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/spectaA/live-dictate/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/spectaA/live-dictate/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/spectaA/live-dictate/compare/v0.2.0...v0.3.0

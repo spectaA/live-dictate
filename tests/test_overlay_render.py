@@ -25,10 +25,10 @@ def _settle() -> None:
         time.sleep(0.01)
 
 
-def _shown_overlay(text: str | None, accent: str | None = None) -> Overlay:
+def _shown_overlay(text: str | None, accent: str | None = None, max_lines: int = 4) -> Overlay:
     from live_dictate.overlay import Overlay
 
-    overlay = Overlay(accent)
+    overlay = Overlay(accent, max_lines=max_lines)
     overlay.listening()
     if text:
         overlay._words.update(text, time.monotonic() - 5)
@@ -69,12 +69,48 @@ def test_glow_fades_out_before_window_edges(text: str | None, accent: str | None
     assert max_edge_alpha(text, accent) == 0
 
 
-def test_long_dictation_shows_at_most_max_lines() -> None:
-    from live_dictate.overlay import MAX_LINES
-
-    overlay = _shown_overlay(TEXT * 8)
-    assert 1 < overlay.view.text.get_layout().get_line_count() <= MAX_LINES
+@pytest.mark.parametrize("max_lines", [2, 4, 9])
+def test_long_dictation_shows_at_most_max_lines(max_lines: int) -> None:
+    overlay = _shown_overlay(TEXT * 12, max_lines=max_lines)
+    assert overlay.view.text.get_layout().get_line_count() == max_lines
     overlay.hide()
+    overlay._window.destroy()
+
+
+def test_locked_overlay_shows_how_to_finish() -> None:
+    from live_dictate.overlay import Overlay
+
+    overlay = Overlay(on_settings=lambda: None)
+    overlay.listening()
+    assert {"space", "hint", "esc", "settings"} <= overlay.view.visible_parts()
+    overlay.locked()
+    parts = overlay.view.visible_parts()
+    assert {"badge", "enter", "esc", "settings"} <= parts
+    assert not parts & {"space", "hint", "eq"}
+    overlay.hide()
+    overlay._window.destroy()
+
+
+def test_toggle_mode_has_no_lock_hint() -> None:
+    from live_dictate.overlay import TOGGLE_HINT, Overlay
+
+    overlay = Overlay(hold=False)
+    overlay.listening()
+    assert "space" not in overlay.view.visible_parts()
+    assert overlay.view.hint.get_text() == TOGGLE_HINT
+    overlay._window.destroy()
+
+
+def test_error_offers_the_settings() -> None:
+    from live_dictate.overlay import Overlay
+
+    clicks: list[bool] = []
+    overlay = Overlay(on_settings=lambda: clicks.append(True))
+    overlay.error("Couldn't reach OpenAI", "Connection closed.", settings=True)
+    assert {"title", "text", "error_button"} <= overlay.view.visible_parts()
+    overlay.view.error_button.clicked()
+    assert clicks == [True]
+    assert not overlay._window.get_visible()
     overlay._window.destroy()
 
 

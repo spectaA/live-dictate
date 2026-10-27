@@ -45,16 +45,20 @@ live-dictate then starts by itself at every login. If you skip `live-dictate set
 | Action | Key |
 |---|---|
 | Dictate | Hold **Right Ctrl**, speak, release |
+| Lock a dictation, to speak hands-free | Double-tap **Right Ctrl**, or press **Space** while holding it |
+| Finish a locked dictation and paste | **Enter** or **Right Ctrl** |
 | Cancel the current dictation | **Esc** |
 | Open the settings | Click the gear in the overlay |
 
 The overlay shows what is happening:
 
-| Listening | Cleaning up |
+| Listening | Locked |
 |---|---|
-| ![Listening](docs/assets/overlay-listening.png) | ![Filler words struck out during cleanup](docs/assets/overlay-removing.png) |
-| **Pasted** | **With an accent color** |
-| ![Pasted](docs/assets/overlay-pasted.png) | ![Orange accent](docs/assets/overlay-accent-orange.png) |
+| ![Listening](docs/assets/overlay-listening.png) | ![Locked, waiting for Enter](docs/assets/overlay-locked.png) |
+| **Cleaning up** | **Pasted** |
+| ![Filler words struck out during cleanup](docs/assets/overlay-removing.png) | ![Pasted](docs/assets/overlay-pasted.png) |
+
+While a dictation is locked, Enter and Esc go to live-dictate only, so Enter never sends a half-dictated chat message. Space is held back the same way while you hold the hotkey.
 
 The ring is neutral gray by default. On GNOME 47 and later it follows your desktop accent color; on any desktop you can pick a color in `live-dictate setup`.
 
@@ -96,6 +100,7 @@ min_audio_ms = 300                      # ignore accidental taps
 paste_restore_delay_s = 0.5
 terminal_classes = ["gnome-terminal-server", "kitty", "alacritty"]
 accent_color = "#fbb86c"                # "" follows the GNOME 47+ accent, else neutral gray
+max_lines = 4                           # lines of live text before older text scrolls away
 history_enabled = false                 # record each dictation in the local history
 history_retention_days = 30
 ```

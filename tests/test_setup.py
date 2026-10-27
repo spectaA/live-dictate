@@ -130,7 +130,12 @@ def test_setup_window_saves_every_setting(tmp_path: Path, monkeypatch: pytest.Mo
     path = tmp_path / "config.toml"
     results: list[bool] = []
     window = setup_window.SetupWindow(
-        Config(languages=[]), path, False, results.append, tmp_path / "history.jsonl"
+        Config(languages=[]),
+        path,
+        False,
+        results.append,
+        tmp_path / "history.jsonl",
+        tmp_path / "recent.json",
     )
 
     assert window._language.get_active_id() == ""
@@ -141,6 +146,7 @@ def test_setup_window_saves_every_setting(tmp_path: Path, monkeypatch: pytest.Mo
     window._accent.select("#fbb86c")
     window._styles["light"].set_active(True)
     window._min_words.set_value(3)
+    window._max_lines.set_value(8)
     window.history.enabled.set_active(True)
     window.history.retention.set_value(7)
     window._finish("sk-new")
@@ -149,7 +155,7 @@ def test_setup_window_saves_every_setting(tmp_path: Path, monkeypatch: pytest.Mo
     assert results == [True]
     config = load_config(path)
     assert (config.languages, config.hotkey, config.mode) == (["fr"], "<f9>", "toggle")
-    assert config.accent_color == "#fbb86c"
+    assert (config.accent_color, config.max_lines) == ("#fbb86c", 8)
     assert (config.cleanup_style, config.cleanup_min_words) == ("light", 3)
     assert (config.history_enabled, config.history_retention_days) == (True, 7)
 

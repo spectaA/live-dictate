@@ -5,6 +5,8 @@ import string
 from html import escape
 
 FADE_IN_S = 0.3
+FRESH_S = 1.2
+FRESH_COLOR = "#ffffff"
 STRIKE_S = 0.35
 VANISH_S = 0.45
 REMOVAL_S = STRIKE_S + VANISH_S
@@ -69,10 +71,15 @@ class LiveWords:
         parts = []
         for word, arrival in zip(self.words[first:], self._arrivals[first:], strict=True):
             age = now - arrival
-            if age >= FADE_IN_S:
+            if age >= FRESH_S:
                 parts.append(escape(word))
+            elif age >= FADE_IN_S:
+                parts.append(f'<span foreground="{FRESH_COLOR}">{escape(word)}</span>')
             else:
-                parts.append(f'<span alpha="{_alpha(age / FADE_IN_S)}">{escape(word)}</span>')
+                alpha = _alpha(age / FADE_IN_S)
+                parts.append(
+                    f'<span foreground="{FRESH_COLOR}" alpha="{alpha}">{escape(word)}</span>'
+                )
         return " ".join(parts)
 
 

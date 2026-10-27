@@ -334,6 +334,7 @@ source = { editable = "." }
 dependencies = [
     { name = "httpx" },
     { name = "pynput" },
+    { name = "python-xlib" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "websockets", version = "16.1.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "websockets", version = "17.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -351,6 +352,7 @@ dev = [
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "pynput", specifier = ">=1.7" },
+    { name = "python-xlib", specifier = ">=0.33" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "websockets", specifier = ">=13" },
 ]

@@ -6,6 +6,7 @@ from threading import Lock, Timer
 from pynput import keyboard
 
 AUTOREPEAT_GRACE_S = 0.05
+KEYPAD_ENTER_VK = 0xFF8D
 
 
 def key_id(key: keyboard.Key | keyboard.KeyCode) -> tuple[str, object]:
@@ -15,6 +16,12 @@ def key_id(key: keyboard.Key | keyboard.KeyCode) -> tuple[str, object]:
     if code.char:
         return ("char", code.char.lower())
     return ("vk", code.vk)
+
+
+def _is_enter(key: Hashable) -> bool:
+    if key == keyboard.Key.enter:
+        return True
+    return isinstance(key, keyboard.KeyCode) and key.vk == KEYPAD_ENTER_VK
 
 
 class ComboTracker:
@@ -50,10 +57,14 @@ class HotkeyListener:
         on_down: Callable[[], None],
         on_up: Callable[[], None],
         on_escape: Callable[[], None],
+        on_enter: Callable[[], None] | None = None,
+        on_space: Callable[[], None] | None = None,
     ) -> None:
         self._on_down = on_down
         self._on_up = on_up
         self._on_escape = on_escape
+        self._on_enter = on_enter
+        self._on_space = on_space
         self._lock = Lock()
         self._pending_up: Timer | None = None
         self._listener = keyboard.Listener(on_press=self._press, on_release=self._release)
@@ -70,6 +81,10 @@ class HotkeyListener:
     def _press(self, key: Hashable) -> None:
         if key == keyboard.Key.esc:
             self._on_escape()
+        elif self._on_enter and _is_enter(key):
+            self._on_enter()
+        elif self._on_space and key == keyboard.Key.space:
+            self._on_space()
         if not self._tracker.press(key):
             return
         with self._lock:
