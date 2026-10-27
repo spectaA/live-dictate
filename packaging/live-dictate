@@ -1,0 +1,3 @@
+#!/bin/sh
+# -s ignores ~/.local site-packages so user installs cannot shadow the bundled dependencies.
+PYTHONPATH=/opt/live-dictate/lib exec /usr/bin/python3 -s -m live_dictate "$@"

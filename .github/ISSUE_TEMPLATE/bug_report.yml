@@ -1,0 +1,51 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+        Never paste your OpenAI API key. Logs from `live-dictate -v` do not contain it, but they do contain your dictated text.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Hold the hotkey in ...
+        2. Say ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: live-dictate version
+      description: Output of `live-dictate --version`.
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Distribution and desktop
+      placeholder: Pop!_OS 22.04, GNOME on X11
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: Output of `live-dictate check`
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "`journalctl --user -u live-dictate -n 100`, or the output of `live-dictate -v run`."
+      render: text

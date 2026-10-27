@@ -1,0 +1,45 @@
+name: live-dictate
+arch: amd64
+platform: linux
+version: ${VERSION}
+version_schema: semver
+section: utils
+priority: optional
+maintainer: Mathias Billot <50930617+spectaA@users.noreply.github.com>
+homepage: https://github.com/spectaA/live-dictate
+license: MIT
+description: |-
+  Push-to-talk dictation for X11 desktops.
+  Hold a key, speak, release: the speech is transcribed live by OpenAI,
+  cleaned up by a small language model and pasted into the focused field.
+
+# The bundled dependencies include compiled extensions built for the Python 3.10 ABI.
+depends:
+  - python3 (>= 3.10)
+  - python3 (<< 3.11)
+  - python3-gi
+  - python3-gi-cairo
+  - python3-cairo
+  - gir1.2-gtk-3.0
+  - pulseaudio-utils
+  - xdotool
+  - xclip
+  - x11-utils
+  - libsecret-tools
+
+contents:
+  - src: build/lib
+    dst: /opt/live-dictate/lib
+    type: tree
+  - src: packaging/live-dictate
+    dst: /usr/bin/live-dictate
+    file_info:
+      mode: 0755
+  - src: packaging/live-dictate.service
+    dst: /usr/lib/systemd/user/live-dictate.service
+    file_info:
+      mode: 0644
+  - src: LICENSE
+    dst: /usr/share/doc/live-dictate/copyright
+    file_info:
+      mode: 0644
