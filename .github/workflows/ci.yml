@@ -29,7 +29,8 @@ jobs:
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: ${{ env.UV_VERSION }}
-      - run: uv sync --locked
+      # mypy checks the Python 3.10 code paths, which need the tomli backport.
+      - run: uv sync --locked --python 3.10
       - run: uv run ruff check --output-format=github .
       - run: uv run ruff format --check .
       - run: uv run mypy
