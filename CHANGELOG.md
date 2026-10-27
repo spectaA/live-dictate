@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-27
+
+### Added
+
+- Accent color for the overlay ring, picked in the setup window with a live preview, or read from the GNOME 47+ accent setting.
+- "Pasted" confirmation at the end of each dictation.
+
+### Changed
+
+- New overlay design: a rotating gradient ring with a glow that follows your voice.
+- New words fade in, and the words removed by the cleanup are struck out before the text is pasted.
+
 ## [0.2.0] - 2026-10-27
 
 ### Added
@@ -37,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `live-dictate update` to install the latest release with checksum verification.
 - Debian package with a systemd user service, built and published by GitHub Actions.
 
-[Unreleased]: https://github.com/spectaA/live-dictate/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/spectaA/live-dictate/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/spectaA/live-dictate/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/spectaA/live-dictate/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/spectaA/live-dictate/releases/tag/v0.1.0

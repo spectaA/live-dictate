@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import math
 import subprocess
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
+import cairo
 import gi
 import httpx
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import GLib, Gtk  # noqa: E402
+gi.require_version("PangoCairo", "1.0")
+from gi.repository import Gdk, GLib, Gtk, PangoCairo  # noqa: E402
 
+from . import aura  # noqa: E402
+from .accent import resolve_accent  # noqa: E402
 from .config import (  # noqa: E402
     Config,
     default_config_path,
@@ -47,6 +53,19 @@ HOTKEYS = [
     ("<ctrl>+<alt>+<space>", "Ctrl + Alt + Space"),
 ]
 
+ACCENT_PRESETS = [
+    ("", "Auto: your desktop accent color, or neutral gray"),
+    ("#fbb86c", "Orange"),
+    ("#3b82f6", "Blue"),
+    ("#8b5cf6", "Purple"),
+    ("#22c55e", "Green"),
+    ("#f472b6", "Pink"),
+    ("#22d3ee", "Cyan"),
+]
+SWATCH_SIZE = 26
+PREVIEW_HEIGHT = 96
+FRAME_MS = 33
+
 
 def check_api_key(client: httpx.Client, key: str, model: str) -> str | None:
     """Returns None when the key can use `model`, otherwise a message for the user."""
@@ -71,6 +90,99 @@ def _combo(options: list[tuple[str, str]], selected: str) -> Gtk.ComboBoxText:
         combo.append(value, label)
     combo.set_active_id(selected)
     return combo
+
+
+def _rgba_to_hex(rgba: Gdk.RGBA) -> str:
+    channels = (rgba.red, rgba.green, rgba.blue)
+    return "#" + "".join(f"{round(channel * 255):02x}" for channel in channels)
+
+
+class Swatch(Gtk.Button):
+    def __init__(self, color: str | None, tooltip: str) -> None:
+        super().__init__(relief=Gtk.ReliefStyle.NONE, tooltip_text=tooltip)
+        self._rgb = aura.palette(color).stops[0]
+        self.selected = False
+        area = Gtk.DrawingArea()
+        area.set_size_request(SWATCH_SIZE, SWATCH_SIZE)
+        area.connect("draw", self._draw)
+        self.add(area)
+
+    def _draw(self, area: Gtk.DrawingArea, cr: cairo.Context) -> bool:
+        center = SWATCH_SIZE / 2
+        cr.set_source_rgb(*self._rgb)
+        cr.arc(center, center, 8.5, 0, 2 * math.pi)
+        cr.fill()
+        if self.selected:
+            cr.set_source_rgba(*self._rgb, 0.9)
+            cr.set_line_width(2)
+            cr.arc(center, center, 11.5, 0, 2 * math.pi)
+            cr.stroke()
+        return False
+
+
+class AccentPicker(Gtk.Box):
+    def __init__(self, value: str, on_change: Callable[[str], None]) -> None:
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        self._on_change = on_change
+        self._swatches: dict[str, Swatch] = {}
+        system = resolve_accent("")
+        for color, tooltip in ACCENT_PRESETS:
+            swatch = Swatch(color or system, tooltip)
+            swatch.connect("clicked", lambda _button, chosen=color: self.select(chosen))
+            self._swatches[color] = swatch
+            self.pack_start(swatch, False, False, 0)
+        self._custom = Gtk.ColorButton(use_alpha=False, tooltip_text="Custom color")
+        self._custom.connect("color-set", self._on_custom)
+        self.pack_start(self._custom, False, False, 6)
+        self.value = value
+        self.select(value)
+
+    def _on_custom(self, button: Gtk.ColorButton) -> None:
+        self.select(_rgba_to_hex(button.get_rgba()))
+
+    def select(self, value: str) -> None:
+        self.value = value
+        for color, swatch in self._swatches.items():
+            swatch.selected = color == value
+            swatch.queue_draw()
+        if value and value not in self._swatches:
+            rgba = Gdk.RGBA()
+            rgba.parse(value)
+            self._custom.set_rgba(rgba)
+        self._on_change(value)
+
+
+class AuraPreview(Gtk.DrawingArea):
+    def __init__(self, accent: str) -> None:
+        super().__init__()
+        self.set_size_request(MIN_WIDTH, PREVIEW_HEIGHT)
+        self._palette = aura.palette(resolve_accent(accent))
+        self._started = time.monotonic()
+        self.connect("draw", self._draw)
+        timer = GLib.timeout_add(FRAME_MS, self._animate)
+        self.connect("destroy", lambda _area: GLib.source_remove(timer))
+
+    def set_accent(self, accent: str) -> None:
+        self._palette = aura.palette(resolve_accent(accent))
+        self.queue_draw()
+
+    def _animate(self) -> bool:
+        self.queue_draw()
+        return True
+
+    def _draw(self, _area: Gtk.DrawingArea, cr: cairo.Context) -> bool:
+        elapsed = time.monotonic() - self._started
+        reach = aura.GLOW_REACH
+        width = self.get_allocated_width()
+        rect = (reach, reach, width - 2 * reach, PREVIEW_HEIGHT - 2 * reach)
+        glow = 0.55 + 0.35 * abs(math.sin(elapsed * 2.6) * math.sin(elapsed * 1.1))
+        aura.draw_card(cr, rect, 14, self._palette, elapsed * 1.2, glow)
+        layout = self.create_pango_layout("Hold the hotkey and speak…")
+        _, logical = layout.get_pixel_extents()
+        cr.set_source_rgb(0.96, 0.96, 0.97)
+        cr.move_to(reach + 16, (PREVIEW_HEIGHT - logical.height) / 2)
+        PangoCairo.show_layout(cr, layout)
+        return False
 
 
 class SetupWindow(Gtk.Window):
@@ -123,8 +235,13 @@ class SetupWindow(Gtk.Window):
         self._hotkey = _combo(HOTKEYS, config.hotkey)
         self._add_row(grid, 3, "Hotkey", self._hotkey)
 
+        self._preview = AuraPreview(config.accent_color)
+        self._accent = AccentPicker(config.accent_color, self._preview.set_accent)
+        self._add_row(grid, 4, "Color", self._accent)
+        grid.attach(self._preview, 0, 5, 2, 1)
+
         self._status = Gtk.Label(xalign=0, wrap=True, max_width_chars=50)
-        grid.attach(self._status, 0, 4, 2, 1)
+        grid.attach(self._status, 0, 6, 2, 1)
         self.add(grid)
 
         self._save.set_can_default(True)
@@ -173,6 +290,7 @@ class SetupWindow(Gtk.Window):
                 {
                     "languages": [language] if language else [],
                     "hotkey": self._hotkey.get_active_id(),
+                    "accent_color": self._accent.value,
                 },
             )
         except (OSError, ValueError, subprocess.SubprocessError) as error:

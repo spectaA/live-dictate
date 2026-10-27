@@ -9,6 +9,8 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
+from .accent import HEX_COLOR
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:
@@ -64,10 +66,13 @@ class Config:
     min_audio_ms: int = 300
     paste_restore_delay_s: float = 0.5
     terminal_classes: list[str] = field(default_factory=lambda: list(DEFAULT_TERMINAL_CLASSES))
+    accent_color: str = ""
 
     def __post_init__(self) -> None:
         if self.mode not in ("hold", "toggle"):
             raise ValueError(f"mode must be 'hold' or 'toggle', got {self.mode!r}")
+        if self.accent_color and not HEX_COLOR.match(self.accent_color):
+            raise ValueError(f"accent_color must be empty or #rrggbb, got {self.accent_color!r}")
 
 
 def default_config_path() -> Path:

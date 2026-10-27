@@ -13,9 +13,9 @@ Push-to-talk dictation for Linux X11 desktops. Hold a key, speak, release: your 
 ## Features
 
 - **Live transcript** while you speak, streamed by OpenAI [`gpt-live-transcribe`](https://developers.openai.com/api/docs/guides/realtime-transcription).
-- **Cleanup pass** that removes filler words, stutters and false starts, and fixes punctuation, without rephrasing you.
+- **Visible cleanup** that removes filler words, stutters and false starts, and fixes punctuation, without rephrasing you. You see the removed words struck out before the text is pasted.
 - **Pastes anywhere**: browsers, editors, chat apps and terminals (`Ctrl+Shift+V` is used in terminals). Your clipboard is restored afterwards.
-- **Unobtrusive overlay** on the monitor under your pointer, with a live audio level meter. It never steals the focus.
+- **Aura overlay** on the monitor under your pointer: its glowing ring reacts to your voice and follows your accent color. It never steals the focus.
 - **Fast by design**: audio streams while you speak, so the transcript is final about half a second after you release the key.
 - **One-command updates** from GitHub releases, with checksum verification.
 
@@ -33,7 +33,7 @@ sudo apt install ./live-dictate_*_amd64.deb
 live-dictate setup
 ```
 
-The setup window asks for your OpenAI API key, checks it, and lets you pick your language and hotkey. The key is stored in your GNOME keyring, never in a file.
+The setup window asks for your OpenAI API key, checks it, and lets you pick your language, hotkey and color. The key is stored in your GNOME keyring, never in a file.
 
 live-dictate then starts by itself at every login. If you skip `live-dictate setup`, the same window opens at your next login. You can reopen it at any time from the applications menu (**live-dictate**) or with `live-dictate setup`.
 
@@ -48,12 +48,16 @@ The overlay shows what is happening:
 
 | Listening | Cleaning up |
 |---|---|
-| ![Listening](docs/assets/overlay-listening.png) | ![Cleaning up](docs/assets/overlay-cleaning.png) |
+| ![Listening](docs/assets/overlay-listening.png) | ![Filler words struck out during cleanup](docs/assets/overlay-removing.png) |
+| **Pasted** | **With an accent color** |
+| ![Pasted](docs/assets/overlay-pasted.png) | ![Orange accent](docs/assets/overlay-accent-orange.png) |
+
+The ring is neutral gray by default. On GNOME 47 and later it follows your desktop accent color; on any desktop you can pick a color in `live-dictate setup`.
 
 Commands:
 
 ```bash
-live-dictate setup             # change the API key, language or hotkey
+live-dictate setup             # change the API key, language, hotkey or color
 live-dictate check --api       # diagnose tools, key, microphone and the cleanup call
 live-dictate run --dry-run     # print the text instead of pasting it
 live-dictate run --no-cleanup  # paste the raw transcript
@@ -82,6 +86,7 @@ cleanup_min_words = 5                   # shorter dictations skip the cleanup
 min_audio_ms = 300                      # ignore accidental taps
 paste_restore_delay_s = 0.5
 terminal_classes = ["gnome-terminal-server", "kitty", "alacritty"]
+accent_color = "#fbb86c"                # "" follows the GNOME 47+ accent, else neutral gray
 ```
 
 Windows listed in `terminal_classes` receive `Ctrl+Shift+V`. Run `xprop WM_CLASS` and click a window to find its class.

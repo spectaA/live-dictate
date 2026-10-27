@@ -32,7 +32,10 @@ The `pynput` and `recorder` threads hand work to the asyncio loop with `loop.cal
 - **Fall back to the raw transcript.** A failed or slow cleanup must never lose a dictation.
 - **Trim the overlay by whole lines.** Dropping leading lines keeps the remaining lines wrapped exactly as before, so the text scrolls up instead of shifting sideways.
 - **50 ms grace period on key release.** X11 auto-repeat sends release and press pairs while a regular key is held. Modifier keys such as Ctrl are not affected.
-- **The window margin contains the whole shadow.** GTK 3 blurs `box-shadow` well beyond its declared radius, and the window is cropped to the card margin. A test checks that the shadow fades out before the window edges.
+- **The overlay card is drawn with cairo, not CSS.** Cairo has no conic gradient, so the ring paints colored slices, rendered once per frame into an opaque group to avoid seams, then clipped to the ring. The glow stacks translucent bands, since GTK 3 cannot blur behind a window.
+- **The window margin contains the whole glow.** The window is cropped to the card margin. A test checks that the glow fades out before the window edges.
+- **Removed words come from a diff.** The cleanup model returns plain text, so the overlay compares raw and clean words with `difflib`, ignoring case and punctuation, to strike out what was dropped. The paste does not wait for this animation.
+- **Accent color from GNOME 47+ only.** GTK theme colors are unreliable: Pop's theme names a cyan color `accent_color` while it looks orange. Without a configured or GNOME accent, the ring stays neutral gray.
 
 ## Packaging
 

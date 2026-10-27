@@ -136,12 +136,26 @@ def test_setup_window_saves_language_and_hotkey(
     assert window._language.get_active_id() == ""
     window._language.set_active_id("fr")
     window._hotkey.set_active_id("<f9>")
+    window._accent.select("#fbb86c")
     window._finish("sk-new")
 
     assert stored == ["sk-new"]
     assert results == [True]
     config = load_config(path)
     assert (config.languages, config.hotkey) == (["fr"], "<f9>")
+    assert config.accent_color == "#fbb86c"
+
+
+@needs_display
+def test_accent_picker_accepts_custom_colors() -> None:
+    from live_dictate.setup_window import AccentPicker
+
+    chosen: list[str] = []
+    picker = AccentPicker("", chosen.append)
+    picker.select("#123456")
+    assert picker.value == "#123456"
+    assert chosen == ["", "#123456"]
+    assert not any(swatch.selected for swatch in picker._swatches.values())
 
 
 @needs_display

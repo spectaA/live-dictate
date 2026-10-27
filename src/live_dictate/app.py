@@ -10,6 +10,7 @@ from collections.abc import Callable
 
 from gi.repository import GLib
 
+from .accent import resolve_accent
 from .audio import Recorder, rms
 from .cleanup import Cleaner, needs_cleanup
 from .config import Config
@@ -17,8 +18,6 @@ from .hotkey import HotkeyListener
 from .injector import Injector
 from .overlay import Overlay, level_from_rms
 from .transcriber import LiveTranscriber
-
-ERROR_DISPLAY_S = 4
 
 log = logging.getLogger(__name__)
 
@@ -34,13 +33,10 @@ class OverlayBridge:
 
     def __init__(self, overlay: Overlay) -> None:
         self._overlay = overlay
-        self._hide_timer: int | None = None
 
-    def _call(self, action: Callable[[], None]) -> None:
+    @staticmethod
+    def _call(action: Callable[[], None]) -> None:
         def run() -> bool:
-            if self._hide_timer is not None:
-                GLib.source_remove(self._hide_timer)
-                self._hide_timer = None
             action()
             return False
 
@@ -53,29 +49,19 @@ class OverlayBridge:
         self._call(lambda: self._overlay.partial(text))
 
     def level(self, value: float) -> None:
-        def run() -> bool:
-            self._overlay.level(value)
-            return False
-
-        GLib.idle_add(run)
+        self._call(lambda: self._overlay.level(value))
 
     def cleaning(self) -> None:
         self._call(self._overlay.cleaning)
+
+    def finished(self, raw: str, final: str) -> None:
+        self._call(lambda: self._overlay.finished(raw, final))
 
     def hide(self) -> None:
         self._call(self._overlay.hide)
 
     def error(self, message: str) -> None:
-        def show_then_schedule_hide() -> None:
-            self._overlay.error(message)
-            self._hide_timer = GLib.timeout_add_seconds(ERROR_DISPLAY_S, self._expire_error)
-
-        self._call(show_then_schedule_hide)
-
-    def _expire_error(self) -> bool:
-        self._hide_timer = None
-        self._overlay.hide()
-        return False
+        self._call(lambda: self._overlay.error(message))
 
 
 class App:
@@ -159,7 +145,7 @@ class App:
             if self._cleaner and needs_cleanup(transcript, self._config.cleanup_min_words):
                 self._ui.cleaning()
                 text = await self._cleaner.clean(transcript)
-            self._ui.hide()
+            self._ui.finished(transcript, text)
             log.info(
                 "latency after release: transcript %.2fs, cleanup %.2fs",
                 transcribed_at - self._released_at,
@@ -188,7 +174,7 @@ def run_app(
     loop = asyncio.new_event_loop()
     threading.Thread(target=loop.run_forever, name="asyncio", daemon=True).start()
 
-    ui = OverlayBridge(Overlay())
+    ui = OverlayBridge(Overlay(resolve_accent(config.accent_color)))
     app = App(config, api_key, ui, cleanup, output)
 
     def dispatch(handler: Callable[[], None]) -> Callable[[], None]:

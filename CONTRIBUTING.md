@@ -31,7 +31,7 @@ uv run pytest            # or `xvfb-run uv run pytest` without a display
 After a change to the overlay, regenerate the screenshots used by the README:
 
 ```bash
-uv run python scripts/render_overlay.py docs/assets
+uv run python scripts/render_overlay.py docs/assets listening live-text removing pasted accent-orange
 ```
 
 ## Commit messages
