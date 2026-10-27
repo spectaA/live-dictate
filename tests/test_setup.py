@@ -122,28 +122,63 @@ def test_check_api_key(status: int, expected: str | None) -> None:
 
 
 @needs_display
-def test_setup_window_saves_language_and_hotkey(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_setup_window_saves_every_setting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from live_dictate import setup_window
 
     stored: list[str] = []
     monkeypatch.setattr(setup_window, "store_api_key", stored.append)
     path = tmp_path / "config.toml"
     results: list[bool] = []
-    window = setup_window.SetupWindow(Config(languages=[]), path, False, results.append)
+    window = setup_window.SetupWindow(
+        Config(languages=[]), path, False, results.append, tmp_path / "history.jsonl"
+    )
 
     assert window._language.get_active_id() == ""
+    assert window.cleanup_style == "standard"
     window._language.set_active_id("fr")
     window._hotkey.set_active_id("<f9>")
+    window._mode.set_active_id("toggle")
     window._accent.select("#fbb86c")
+    window._styles["light"].set_active(True)
+    window._min_words.set_value(3)
+    window.history.enabled.set_active(True)
+    window.history.retention.set_value(7)
     window._finish("sk-new")
 
     assert stored == ["sk-new"]
     assert results == [True]
     config = load_config(path)
-    assert (config.languages, config.hotkey) == (["fr"], "<f9>")
+    assert (config.languages, config.hotkey, config.mode) == (["fr"], "<f9>", "toggle")
     assert config.accent_color == "#fbb86c"
+    assert (config.cleanup_style, config.cleanup_min_words) == ("light", 3)
+    assert (config.history_enabled, config.history_retention_days) == (True, 7)
+
+
+@needs_display
+def test_history_tab_shows_recorded_dictations(tmp_path: Path) -> None:
+    from live_dictate import history, setup_window
+    from live_dictate.cleanup import CleanupResult
+
+    path = tmp_path / "history.jsonl"
+    entry = history.make_entry(
+        config=Config(),
+        outcome="pasted",
+        raw="euh bonjour à tous",
+        text="Bonjour à tous.",
+        cleanup="done",
+        audio_ms=3000,
+        billed_seconds=3.0,
+        transcript_s=0.4,
+        cleanup_s=1.0,
+        result=CleanupResult("Bonjour à tous."),
+    )
+    history.append(path, entry)
+    page = setup_window.HistoryPage(Config(history_enabled=True), path)
+    assert page._values["dictations"].get_text() == "1"
+    assert page._values["wait"].get_text() == "1.4 s"
+    assert page._values["removed"].get_text() == "25.0%"
+    assert len(page._recent.get_children()) == 1
+    assert page.open_file.get_sensitive()
 
 
 @needs_display

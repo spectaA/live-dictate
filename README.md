@@ -13,10 +13,12 @@ Push-to-talk dictation for Linux X11 desktops. Hold a key, speak, release: your 
 ## Features
 
 - **Live transcript** while you speak, streamed by OpenAI [`gpt-live-transcribe`](https://developers.openai.com/api/docs/guides/realtime-transcription).
-- **Visible cleanup** that removes filler words, stutters and false starts, and fixes punctuation, without rephrasing you. You see the removed words struck out before the text is pasted.
+- **Visible cleanup** that removes filler words, stutters and false starts, and fixes punctuation, without rephrasing you. You see the removed words struck out before the text is pasted. Three styles: Light, Standard and Polished.
+- **History and statistics**, opt-in and kept on your computer only: what you said, what was pasted, latency and estimated cost.
 - **Pastes anywhere**: browsers, editors, chat apps and terminals (`Ctrl+Shift+V` is used in terminals). Your clipboard is restored afterwards.
 - **Aura overlay** on the monitor under your pointer: its glowing ring reacts to your voice and follows your accent color. It never steals the focus.
 - **Fast by design**: audio streams while you speak, so the transcript is final about half a second after you release the key.
+- **Settings one click away** from the gear in the overlay, or from the applications menu.
 - **One-command updates** from GitHub releases, with checksum verification.
 
 ## Requirements
@@ -33,9 +35,9 @@ sudo apt install ./live-dictate_*_amd64.deb
 live-dictate setup
 ```
 
-The setup window asks for your OpenAI API key, checks it, and lets you pick your language, hotkey and color. The key is stored in your GNOME keyring, never in a file.
+The settings window asks for your OpenAI API key and checks it. It also sets the language, hotkey, cleanup style, color and history. The key is stored in your GNOME keyring, never in a file.
 
-live-dictate then starts by itself at every login. If you skip `live-dictate setup`, the same window opens at your next login. You can reopen it at any time from the applications menu (**live-dictate**) or with `live-dictate setup`.
+live-dictate then starts by itself at every login. If you skip `live-dictate setup`, the same window opens at your next login. You can reopen it at any time with the gear in the overlay, from the applications menu (**live-dictate**) or with `live-dictate setup`.
 
 ## Usage
 
@@ -43,6 +45,7 @@ live-dictate then starts by itself at every login. If you skip `live-dictate set
 |---|---|
 | Dictate | Hold **Right Ctrl**, speak, release |
 | Cancel the current dictation | **Esc** |
+| Open the settings | Click the gear in the overlay |
 
 The overlay shows what is happening:
 
@@ -57,7 +60,9 @@ The ring is neutral gray by default. On GNOME 47 and later it follows your deskt
 Commands:
 
 ```bash
-live-dictate setup             # change the API key, language, hotkey or color
+live-dictate setup             # open the settings window
+live-dictate stats             # summarize the last 30 days of history
+live-dictate stats --last 5    # also print the last 5 dictations
 live-dictate check --api       # diagnose tools, key, microphone and the cleanup call
 live-dictate run --dry-run     # print the text instead of pasting it
 live-dictate run --no-cleanup  # paste the raw transcript
@@ -78,7 +83,7 @@ transcription_model = "gpt-live-transcribe"
 transcription_delay = "low"             # minimal, low, medium, high, xhigh
 transcription_prompt = ""               # context, e.g. "Software engineering stand-up"
 keywords = ["Kubernetes", "PostgreSQL"] # names and jargon to spell correctly
-cleanup_enabled = true
+cleanup_style = "standard"              # off, light, standard or polished
 cleanup_model = "gpt-6-luna"
 cleanup_service_tier = "fast"           # "default" is cheaper and slower
 cleanup_timeout_s = 3.0                 # the raw transcript is pasted on timeout
@@ -87,16 +92,20 @@ min_audio_ms = 300                      # ignore accidental taps
 paste_restore_delay_s = 0.5
 terminal_classes = ["gnome-terminal-server", "kitty", "alacritty"]
 accent_color = "#fbb86c"                # "" follows the GNOME 47+ accent, else neutral gray
+history_enabled = false                 # record each dictation in the local history
+history_retention_days = 30
 ```
 
 Windows listed in `terminal_classes` receive `Ctrl+Shift+V`. Run `xprop WM_CLASS` and click a window to find its class.
 
-Restart the service after editing the file: `systemctl --user restart live-dictate`.
+Restart the service after editing the file: `systemctl --user restart live-dictate`. Saving the settings window restarts it for you.
 
 ## Privacy and cost
 
 - Audio is streamed to OpenAI for transcription, and the transcript is sent to OpenAI for cleanup. Cleanup requests are made with `store: false`. Review [OpenAI's data policies](https://openai.com/policies/) before dictating sensitive content.
-- Nothing is written to disk. Dictated text only appears in logs with `-v`.
+- The history is off by default. When you turn it on, each dictation is appended to `~/.local/share/live-dictate/history.jsonl`, readable by you only, and entries older than the retention period are deleted. It contains your dictated text: keep that in mind before turning it on.
+- Without the history, nothing is written to disk. Dictated text only appears in logs with `-v`.
+- Costs in the history are estimates from a built-in price table. The raw usage (billed audio seconds and tokens) is stored next to them.
 - At OpenAI's current prices, transcription costs about $0.017 per minute of audio. Cleanup costs a fraction of a cent per dictation.
 
 ## Troubleshooting

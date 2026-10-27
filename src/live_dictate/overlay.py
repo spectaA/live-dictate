@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import time
+from collections.abc import Callable
 from html import escape
 
 import cairo
@@ -47,6 +48,16 @@ CSS = b"""
     padding: 0 5px;
 }
 .ld-text { color: #f4f4f6; font-size: 12.5pt; }
+.ld-settings {
+    background: none;
+    border: none;
+    box-shadow: none;
+    padding: 0 2px;
+    min-height: 0;
+    min-width: 0;
+    color: #a1a1aa;
+}
+.ld-settings:hover { color: #f4f4f6; }
 """
 
 PLACEHOLDER = '<span foreground="#71717a">Speak…</span>'
@@ -74,6 +85,7 @@ def level_from_rms(rms: float) -> float:
 class OverlayView(Gtk.Box):
     def __init__(self) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.settings_enabled = False
         self.get_style_context().add_class("ld-card")
         self.set_margin_top(WINDOW_MARGIN)
         self.set_margin_bottom(WINDOW_MARGIN)
@@ -88,8 +100,14 @@ class OverlayView(Gtk.Box):
         self._key = Gtk.Label(label="Esc")
         self._key.get_style_context().add_class("ld-key")
         self._key.set_valign(Gtk.Align.CENTER)
+        self.settings = Gtk.Button.new_from_icon_name("emblem-system-symbolic", Gtk.IconSize.MENU)
+        self.settings.set_relief(Gtk.ReliefStyle.NONE)
+        self.settings.set_tooltip_text("Settings")
+        self.settings.set_valign(Gtk.Align.CENTER)
+        self.settings.get_style_context().add_class("ld-settings")
         header.pack_start(self._icon, False, False, 0)
         header.pack_start(self._status, True, True, 0)
+        header.pack_end(self.settings, False, False, 0)
         header.pack_end(self._key, False, False, 0)
 
         self.text = Gtk.Label(xalign=0)
@@ -103,9 +121,17 @@ class OverlayView(Gtk.Box):
         self.pack_start(self.text, False, False, 0)
         self.show_all()
         self._key.set_no_show_all(True)
+        self.settings.set_no_show_all(True)
         self.text.set_no_show_all(True)
 
-    def header(self, icon: str, status: str, icon_class: str = "ld-icon", key: bool = True) -> None:
+    def header(
+        self,
+        icon: str,
+        status: str,
+        icon_class: str = "ld-icon",
+        key: bool = True,
+        settings: bool = True,
+    ) -> None:
         self._icon.set_from_icon_name(icon, Gtk.IconSize.MENU)
         context = self._icon.get_style_context()
         for name in ("ld-icon", "ld-icon-done", "ld-icon-error"):
@@ -113,6 +139,7 @@ class OverlayView(Gtk.Box):
         context.add_class(icon_class)
         self._status.set_text(status)
         self._key.set_visible(key)
+        self.settings.set_visible(settings and self.settings_enabled)
 
     def show_markup(self, markup: str | None) -> None:
         if markup is None:
@@ -147,7 +174,9 @@ def monitor_at_pointer() -> Gdk.Monitor:
 class Overlay:
     """Must only be called from the GTK main thread."""
 
-    def __init__(self, accent: str | None = None) -> None:
+    def __init__(
+        self, accent: str | None = None, on_settings: Callable[[], None] | None = None
+    ) -> None:
         install_css()
         self._palette = aura.palette(accent)
         self._error_palette = aura.palette(ERROR_ACCENT)
@@ -161,6 +190,9 @@ class Overlay:
         self._window.connect("draw", self._draw)
 
         self.view = OverlayView()
+        if on_settings:
+            self.view.settings_enabled = True
+            self.view.settings.connect("clicked", lambda _button: on_settings())
         self._window.add(self.view)
         self._window.connect("size-allocate", self._reposition)
         self._monitor: Gdk.Monitor | None = None
@@ -200,6 +232,16 @@ class Overlay:
         x = area.x + (area.width - width) // 2
         y = area.y + area.height - height - BOTTOM_MARGIN
         self._window.move(x, y)
+        self._limit_input_to_card()
+
+    def _limit_input_to_card(self) -> None:
+        # The transparent glow margin must not swallow clicks meant for the window below.
+        gdk_window = self._window.get_window()
+        if gdk_window is None:
+            return
+        card = self.view.get_allocation()
+        rect = cairo.RectangleInt(card.x, card.y, card.width, card.height)
+        gdk_window.input_shape_combine_region(cairo.Region(rect), 0, 0)
 
     def _shrink_to_content(self) -> None:
         self._window.resize(1, 1)
@@ -267,7 +309,9 @@ class Overlay:
                 self._shrink_to_content()
         else:
             self._enter("pasted")
-            self.view.header("object-select-symbolic", "Pasted", "ld-icon-done", key=False)
+            self.view.header(
+                "object-select-symbolic", "Pasted", "ld-icon-done", key=False, settings=False
+            )
             self.view.show_markup(None)
             self._shrink_to_content()
 
@@ -298,7 +342,9 @@ class Overlay:
         self._removed = removed_word_indices(raw, final) if raw != final else set()
         self._final = final
         if self._mode != "cleaning":
-            self.view.header("object-select-symbolic", "Pasted", "ld-icon-done", key=False)
+            self.view.header(
+                "object-select-symbolic", "Pasted", "ld-icon-done", key=False, settings=False
+            )
         self._enter("finishing")
         if not self._window.get_visible():
             self._show()

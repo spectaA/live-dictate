@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-27
+
+### Added
+
+- Settings window with General, Cleanup, Appearance and History tabs.
+- Gear button in the overlay that opens the settings; the dictation in progress is cancelled.
+- Opt-in local history of dictations with retention, statistics, a per-day chart and the latest dictations in the History tab.
+- `live-dictate stats` to summarize the history from the terminal.
+- Cleanup styles: Off, Light, Standard and Polished.
+
+### Changed
+
+- Rewritten cleanup prompts with examples. Standard, the default, fixes slips and self-corrections without rewording.
+- The overlay's transparent glow margin no longer blocks clicks on the windows below.
+
+### Fixed
+
+- `live-dictate setup` could fail to start when GTK 4 was also installed.
+- `live-dictate update` no longer prints `debconf` warnings.
+
 ## [0.3.0] - 2026-10-27
 
 ### Added
@@ -49,7 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `live-dictate update` to install the latest release with checksum verification.
 - Debian package with a systemd user service, built and published by GitHub Actions.
 
-[Unreleased]: https://github.com/spectaA/live-dictate/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/spectaA/live-dictate/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/spectaA/live-dictate/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/spectaA/live-dictate/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/spectaA/live-dictate/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/spectaA/live-dictate/releases/tag/v0.1.0

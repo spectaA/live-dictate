@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import IO
 
@@ -17,7 +18,7 @@ import httpx
 from . import __version__
 from .audio import Recorder, pcm_duration_ms
 from .cleanup import Cleaner
-from .config import Config, has_api_key, load_api_key, load_config
+from .config import Config, default_history_path, has_api_key, load_api_key, load_config
 from .updater import SERVICE, UpdateError, github_client, update
 
 REQUIRED_TOOLS = ("parec", "xdotool", "xclip", "xprop")
@@ -74,7 +75,7 @@ def _check(args: argparse.Namespace) -> int:
 async def _clean_once(api_key: str, config: Config, text: str) -> str:
     cleaner = Cleaner(api_key, config)
     try:
-        return await cleaner.clean(text)
+        return (await cleaner.clean(text)).text
     finally:
         await cleaner.aclose()
 
@@ -114,7 +115,8 @@ def _run(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     api_key = load_api_key()
     output = _print_output if args.dry_run else None
-    run_app(config, api_key, cleanup=config.cleanup_enabled and not args.no_cleanup, output=output)
+    cleanup = config.effective_cleanup_style != "off" and not args.no_cleanup
+    run_app(config, api_key, cleanup=cleanup, output=output, config_path=args.config)
     return 0
 
 
@@ -129,6 +131,36 @@ def _setup(args: argparse.Namespace) -> int:
         print("Saved. live-dictate is running: hold the hotkey and speak.")
     else:
         print("Saved. Start live-dictate with `live-dictate run`.")
+    return 0
+
+
+def _stats(args: argparse.Namespace) -> int:
+    from . import history
+
+    config = load_config(args.config)
+    path = default_history_path()
+    if not config.history_enabled and not path.exists():
+        print("The history is off. Turn it on in `live-dictate setup`, History tab.")
+        return 0
+    since = datetime.now(timezone.utc) - timedelta(days=args.days) if args.days else None
+    entries = history.load(path, since)
+    stats = history.summarize(entries)
+    period = f"last {args.days} days" if args.days else "all time"
+    wait = "-" if stats.average_wait_s is None else f"{stats.average_wait_s:.1f} s"
+    removed = "-" if stats.removed_ratio is None else f"{stats.removed_ratio:.1%}"
+    print(f"live-dictate statistics, {period} ({path})")
+    print(f"  dictations                {stats.dictations:,}")
+    print(f"  speaking time             {history.format_duration(stats.speaking_s)}")
+    print(f"  estimated cost            ${stats.cost_usd:.2f}")
+    print(f"  avg. wait after release   {wait}")
+    print(f"  words dictated            {stats.words:,}")
+    print(f"  words removed by cleanup  {removed}")
+    for entry in entries[-args.last :] if args.last else []:
+        moment = datetime.fromisoformat(entry["time"]).astimezone()
+        print(f"\n{moment:%Y-%m-%d %H:%M}  {entry['outcome']}  {entry.get('style')}")
+        print(f"  raw:   {entry.get('raw', '')}")
+        if entry.get("text") and entry.get("text") != entry.get("raw"):
+            print(f"  text:  {entry['text']}")
     return 0
 
 
@@ -159,7 +191,11 @@ def build_parser() -> argparse.ArgumentParser:
     check = commands.add_parser("check", help="verify tools, API key and microphone")
     check.add_argument("--api", action="store_true", help="also send one cleanup request")
 
-    commands.add_parser("setup", help="set the API key, language and hotkey")
+    commands.add_parser("setup", help="open the settings window")
+
+    stats = commands.add_parser("stats", help="summarize the dictation history")
+    stats.add_argument("--days", type=int, default=30, help="period in days, 0 for all time")
+    stats.add_argument("--last", type=int, default=0, help="also print the last N dictations")
 
     upgrade = commands.add_parser("update", help="install the latest release from GitHub")
     upgrade.add_argument("--check", action="store_true", help="only report available updates")
@@ -180,6 +216,8 @@ def main() -> None:
         sys.exit(_check(args))
     if args.command == "setup":
         sys.exit(_setup(args))
+    if args.command == "stats":
+        sys.exit(_stats(args))
     if args.command == "update":
         sys.exit(_update(args))
     if args.command is None:

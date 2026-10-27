@@ -17,6 +17,7 @@ else:
     import tomli as tomllib
 
 KEYRING_ATTRIBUTES = ("service", "live-dictate", "account", "openai")
+CLEANUP_STYLES = ("off", "light", "standard", "polished")
 
 DEFAULT_TERMINAL_CLASSES = (
     "gnome-terminal-server",
@@ -58,7 +59,9 @@ class Config:
     transcription_delay: str = "low"
     transcription_prompt: str = ""
     keywords: list[str] = field(default_factory=list)
+    # Kept for configs written before cleanup_style existed; False behaves like style "off".
     cleanup_enabled: bool = True
+    cleanup_style: str = "standard"
     cleanup_model: str = "gpt-6-luna"
     cleanup_service_tier: str = "fast"
     cleanup_timeout_s: float = 3.0
@@ -67,10 +70,21 @@ class Config:
     paste_restore_delay_s: float = 0.5
     terminal_classes: list[str] = field(default_factory=lambda: list(DEFAULT_TERMINAL_CLASSES))
     accent_color: str = ""
+    history_enabled: bool = False
+    history_retention_days: int = 30
+
+    @property
+    def effective_cleanup_style(self) -> str:
+        return self.cleanup_style if self.cleanup_enabled else "off"
 
     def __post_init__(self) -> None:
         if self.mode not in ("hold", "toggle"):
             raise ValueError(f"mode must be 'hold' or 'toggle', got {self.mode!r}")
+        if self.cleanup_style not in CLEANUP_STYLES:
+            styles = ", ".join(CLEANUP_STYLES)
+            raise ValueError(f"cleanup_style must be one of {styles}, got {self.cleanup_style!r}")
+        if self.history_retention_days < 1:
+            raise ValueError("history_retention_days must be at least 1")
         if self.accent_color and not HEX_COLOR.match(self.accent_color):
             raise ValueError(f"accent_color must be empty or #rrggbb, got {self.accent_color!r}")
 
@@ -78,6 +92,11 @@ class Config:
 def default_config_path() -> Path:
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     return Path(base) / "live-dictate" / "config.toml"
+
+
+def default_history_path() -> Path:
+    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(base) / "live-dictate" / "history.jsonl"
 
 
 def read_config_file(path: Path) -> dict[str, Any]:

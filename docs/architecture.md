@@ -35,6 +35,8 @@ The `pynput` and `recorder` threads hand work to the asyncio loop with `loop.cal
 - **The overlay card is drawn with cairo, not CSS.** Cairo has no conic gradient, so the ring paints colored slices, rendered once per frame into an opaque group to avoid seams, then clipped to the ring. The glow stacks translucent bands, since GTK 3 cannot blur behind a window.
 - **The window margin contains the whole glow.** The window is cropped to the card margin. A test checks that the glow fades out before the window edges.
 - **Removed words come from a diff.** The cleanup model returns plain text, so the overlay compares raw and clean words with `difflib`, ignoring case and punctuation, to strike out what was dropped. The paste does not wait for this animation.
+- **Settings apply by re-executing the daemon in place.** The overlay's gear opens the settings window inside the daemon. Saving re-executes the process with `os.execv`, so systemd keeps the same PID and the single-instance lock, opened close-on-exec, is released for the new image.
+- **History as append-only JSONL.** One line per dictation is easy to read with `jq` or a spreadsheet, and a corrupted line never spoils the others. The file is created with mode `0600`, and pruning rewrites it atomically.
 - **Accent color from GNOME 47+ only.** GTK theme colors are unreliable: Pop's theme names a cyan color `accent_color` while it looks orange. Without a configured or GNOME accent, the ring stays neutral gray.
 
 ## Packaging

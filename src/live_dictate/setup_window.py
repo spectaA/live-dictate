@@ -5,26 +5,32 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import cairo
 import gi
 import httpx
 
 gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
 gi.require_version("PangoCairo", "1.0")
-from gi.repository import Gdk, GLib, Gtk, PangoCairo  # noqa: E402
+from gi.repository import Gdk, Gio, GLib, Gtk, PangoCairo  # noqa: E402
 
-from . import aura  # noqa: E402
+from . import aura, history  # noqa: E402
 from .accent import resolve_accent  # noqa: E402
 from .config import (  # noqa: E402
     Config,
     default_config_path,
+    default_history_path,
     has_api_key,
     load_config,
     store_api_key,
     update_config_file,
 )
+from .history import format_duration  # noqa: E402
+from .textflow import STRIKE_S, removal_markup, removed_word_indices  # noqa: E402
 
 API_KEYS_URL = "https://platform.openai.com/api-keys"
 MIN_WIDTH = 440
@@ -65,6 +71,64 @@ ACCENT_PRESETS = [
 SWATCH_SIZE = 26
 PREVIEW_HEIGHT = 96
 FRAME_MS = 33
+WINDOW_WIDTH = 600
+CHART_HEIGHT = 64
+RECENT_COUNT = 3
+
+MODES = [("hold", "Hold to talk"), ("toggle", "Press to start, press again to stop")]
+
+CLEANUP_OPTIONS = [
+    ("off", "Off", "Paste exactly what was transcribed.", None),
+    (
+        "light",
+        "Light",
+        "Remove filler words and stutters only.",
+        (
+            "euh je je voulais dire que bah la réunion est décalée",
+            "Je voulais dire que la réunion est décalée.",
+        ),
+    ),
+    (
+        "standard",
+        "Standard",
+        "Recommended. Also fixes slips, repetitions and self-corrections, without rewording.",
+        (
+            "la réunion de mardi non de jeudi elle est elle est décalée",
+            "La réunion de jeudi, elle est décalée.",
+        ),
+    ),
+    (
+        "polished",
+        "Polished",
+        "Smoother written style with the same meaning.",
+        (
+            "la réunion elle est décalée parce que le client il a pas validé",
+            "La réunion est décalée, car le client n'a pas validé.",
+        ),
+    ),
+]
+
+PERIODS = [(7, "7 days"), (30, "30 days"), (0, "All")]
+
+CSS = b"""
+radiobutton.ld-option {
+    border: 1px solid alpha(@theme_fg_color, 0.12);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+radiobutton.ld-option:checked { border-color: @theme_selected_bg_color; }
+.ld-stat {
+    background-color: alpha(@theme_fg_color, 0.05);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+.ld-stat-value { font-size: 15pt; font-weight: bold; }
+.ld-recent {
+    background-color: alpha(@theme_fg_color, 0.04);
+    border-radius: 8px;
+    padding: 8px 12px;
+}
+"""
 
 
 def check_api_key(client: httpx.Client, key: str, model: str) -> str | None:
@@ -185,6 +249,218 @@ class AuraPreview(Gtk.DrawingArea):
         return False
 
 
+def _install_css() -> None:
+    provider = Gtk.CssProvider()
+    provider.load_from_data(CSS)
+    Gtk.StyleContext.add_provider_for_screen(
+        Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+
+
+def _label(text: str = "", *, markup: str | None = None, dim: bool = False) -> Gtk.Label:
+    label = Gtk.Label(xalign=0, wrap=True, max_width_chars=60)
+    if markup is None:
+        label.set_text(text)
+    else:
+        label.set_markup(markup)
+    if dim:
+        label.get_style_context().add_class("dim-label")
+    return label
+
+
+def _grid() -> Gtk.Grid:
+    return Gtk.Grid(row_spacing=12, column_spacing=16, margin=24)
+
+
+def _add_row(grid: Gtk.Grid, row: int, label: str, widget: Gtk.Widget) -> None:
+    grid.attach(Gtk.Label(label=label, xalign=0), 0, row, 1, 1)
+    grid.attach(widget, 1, row, 1, 1)
+
+
+def _example_markup(raw: str, clean: str) -> str:
+    removed = removed_word_indices(raw, clean)
+    struck = removal_markup(raw.split(), removed, 0, STRIKE_S)
+    return f'<small>{struck}  <span alpha="50%">→</span>  {GLib.markup_escape_text(clean)}</small>'
+
+
+class StatsChart(Gtk.DrawingArea):
+    """Bars of dictations per day, oldest on the left."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.set_size_request(-1, CHART_HEIGHT)
+        self.counts: list[int] = []
+        self.connect("draw", self._draw)
+
+    def _draw(self, _area: Gtk.DrawingArea, cr: cairo.Context) -> bool:
+        if not self.counts:
+            return False
+        width = self.get_allocated_width()
+        peak = max(max(self.counts), 1)
+        slot = width / len(self.counts)
+        color = self.get_style_context().lookup_color("theme_selected_bg_color")
+        rgba = color[1] if color[0] else Gdk.RGBA(0.4, 0.7, 0.8, 1)
+        cr.set_source_rgba(rgba.red, rgba.green, rgba.blue, 0.85)
+        for index, count in enumerate(self.counts):
+            height = (CHART_HEIGHT - 4) * count / peak
+            if count:
+                aura.rounded_rect(
+                    cr, index * slot + 1.5, CHART_HEIGHT - height, max(slot - 3, 1), height, 2
+                )
+                cr.fill()
+        return False
+
+
+class HistoryPage(Gtk.Box):
+    def __init__(self, config: Config, history_path: Path) -> None:
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin=24)
+        self._path = history_path
+        self._days = 30
+
+        switch_row = Gtk.Box(spacing=12)
+        texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
+        texts.pack_start(_label(markup="<b>Keep a history of dictations</b>"), False, False, 0)
+        texts.pack_start(
+            _label("Stored only on this computer, readable by you only.", dim=True), False, False, 0
+        )
+        self.enabled = Gtk.Switch(active=config.history_enabled, valign=Gtk.Align.CENTER)
+        switch_row.pack_start(texts, True, True, 0)
+        switch_row.pack_end(self.enabled, False, False, 0)
+        self.pack_start(switch_row, False, False, 0)
+
+        retention_row = Gtk.Box(spacing=8)
+        retention_row.pack_start(Gtk.Label(label="Keep entries for"), False, False, 0)
+        self.retention = Gtk.SpinButton.new_with_range(1, 365, 1)
+        self.retention.set_value(config.history_retention_days)
+        retention_row.pack_start(self.retention, False, False, 0)
+        retention_row.pack_start(_label("days", dim=True), False, False, 0)
+        self.pack_start(retention_row, False, False, 0)
+
+        toolbar = Gtk.Box(spacing=8)
+        periods = Gtk.Box()
+        periods.get_style_context().add_class("linked")
+        group: Gtk.RadioButton | None = None
+        for days, label in PERIODS:
+            button = Gtk.RadioButton.new_with_label_from_widget(group, label)
+            button.set_mode(False)
+            button.set_active(days == self._days)
+            button.connect("toggled", self._on_period, days)
+            periods.pack_start(button, False, False, 0)
+            group = group or button
+        self.open_file = Gtk.Button(label="Open history file")
+        self.open_file.connect("clicked", self._on_open)
+        toolbar.pack_start(periods, False, False, 0)
+        toolbar.pack_end(self.open_file, False, False, 0)
+        self.pack_start(toolbar, False, False, 0)
+
+        self._stats = Gtk.Grid(row_spacing=8, column_spacing=8, column_homogeneous=True)
+        self._values: dict[str, Gtk.Label] = {}
+        captions = [
+            ("dictations", "dictations"),
+            ("speaking", "speaking time"),
+            ("cost", "estimated cost"),
+            ("wait", "avg. wait after release"),
+            ("words", "words dictated"),
+            ("removed", "words removed by cleanup"),
+        ]
+        for index, (key, caption) in enumerate(captions):
+            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            card.get_style_context().add_class("ld-stat")
+            value = Gtk.Label(xalign=0)
+            value.get_style_context().add_class("ld-stat-value")
+            card.pack_start(value, False, False, 0)
+            card.pack_start(_label(caption, dim=True), False, False, 0)
+            self._values[key] = value
+            self._stats.attach(card, index % 3, index // 3, 1, 1)
+        self.pack_start(self._stats, False, False, 0)
+
+        self.pack_start(_label("Dictations per day", dim=True), False, False, 0)
+        self._chart = StatsChart()
+        self.pack_start(self._chart, False, False, 0)
+
+        self._recent = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.pack_start(self._recent, False, False, 0)
+        self._empty = _label(dim=True)
+        self.pack_start(self._empty, False, False, 0)
+        self.refresh()
+
+    def _on_period(self, button: Gtk.RadioButton, days: int) -> None:
+        if button.get_active():
+            self._days = days
+            self.refresh()
+
+    def _on_open(self, _button: Gtk.Button) -> None:
+        Gio.AppInfo.launch_default_for_uri(self._path.as_uri(), None)
+
+    def refresh(self) -> None:
+        now = datetime.now(timezone.utc)
+        since = now - timedelta(days=self._days) if self._days else None
+        entries = history.load(self._path, since)
+        stats = history.summarize(entries)
+        self.open_file.set_sensitive(self._path.exists())
+
+        self._values["dictations"].set_text(f"{stats.dictations:,}")
+        self._values["speaking"].set_text(format_duration(stats.speaking_s))
+        self._values["cost"].set_text(f"${stats.cost_usd:.2f}")
+        wait = stats.average_wait_s
+        self._values["wait"].set_text("-" if wait is None else f"{wait:.1f} s")
+        self._values["words"].set_text(f"{stats.words:,}")
+        ratio = stats.removed_ratio
+        self._values["removed"].set_text("-" if ratio is None else f"{ratio:.1%}")
+
+        span = self._days or max(
+            ((now.date() - min(stats.per_day)).days + 1) if stats.per_day else 1, 1
+        )
+        today = now.astimezone().date()
+        self._chart.counts = [
+            stats.per_day.get(today - timedelta(days=offset), 0)
+            for offset in range(span - 1, -1, -1)
+        ]
+        self._chart.queue_draw()
+
+        for child in self._recent.get_children():
+            self._recent.remove(child)
+        pasted = [entry for entry in entries if entry.get("outcome") == "pasted"]
+        pasted.sort(key=lambda entry: str(entry["time"]), reverse=True)
+        for entry in pasted[:RECENT_COUNT]:
+            self._recent.pack_start(self._recent_row(entry), False, False, 0)
+        self._recent.show_all()
+
+        if not entries:
+            hint = "" if self.enabled.get_active() else " Turn on the history to start recording."
+            self._empty.set_text("No dictations recorded for this period." + hint)
+        self._empty.set_visible(not entries)
+
+    @staticmethod
+    def _recent_row(entry: dict[str, Any]) -> Gtk.Widget:
+        row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        row.get_style_context().add_class("ld-recent")
+        moment = datetime.fromisoformat(str(entry["time"])).astimezone()
+        wait = float(entry.get("transcript_s") or 0) + float(entry.get("cleanup_s") or 0)
+        cost = entry.get("cost_usd")
+        meta = Gtk.Box()
+        meta.pack_start(
+            _label(
+                f"{moment:%b %d %H:%M} · {format_duration(float(entry.get('audio_s') or 0))}"
+                f" · {entry.get('style')}",
+                dim=True,
+            ),
+            True,
+            True,
+            0,
+        )
+        cost_text = "" if cost is None else f" · ${float(cost):.3f}"
+        meta.pack_end(_label(f"{wait:.1f} s{cost_text}", dim=True), False, False, 0)
+        row.pack_start(meta, False, False, 0)
+        raw, text = str(entry.get("raw", "")), str(entry.get("text", ""))
+        if entry.get("cleanup") == "done":
+            markup = removal_markup(raw.split(), removed_word_indices(raw, text), 0, STRIKE_S)
+        else:
+            markup = GLib.markup_escape_text(text)
+        row.pack_start(_label(markup=markup), False, False, 0)
+        return row
+
+
 class SetupWindow(Gtk.Window):
     def __init__(
         self,
@@ -192,18 +468,27 @@ class SetupWindow(Gtk.Window):
         config_path: Path,
         key_present: bool,
         on_done: Callable[[bool], None],
+        history_path: Path | None = None,
     ) -> None:
-        super().__init__(title="live-dictate setup")
+        super().__init__(title="live-dictate")
+        _install_css()
         self._config = config
         self._config_path = config_path
         self._key_present = key_present
         self._on_done = on_done
         self._saved = False
-        self.set_resizable(False)
+        self.set_default_size(WINDOW_WIDTH, -1)
         self.set_position(Gtk.WindowPosition.CENTER)
         self.connect("destroy", lambda _window: self._on_done(self._saved))
 
-        header = Gtk.HeaderBar(title="live-dictate", subtitle="Setup")
+        self._stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE)
+        self._stack.add_titled(self._general_page(), "general", "General")
+        self._stack.add_titled(self._cleanup_page(), "cleanup", "Cleanup")
+        self._stack.add_titled(self._appearance_page(), "appearance", "Appearance")
+        self.history = HistoryPage(config, history_path or default_history_path())
+        self._stack.add_titled(self.history, "history", "History")
+
+        header = Gtk.HeaderBar(custom_title=Gtk.StackSwitcher(stack=self._stack))
         cancel = Gtk.Button(label="Cancel")
         cancel.connect("clicked", lambda _button: self.destroy())
         self._save = Gtk.Button(label="Save")
@@ -213,44 +498,112 @@ class SetupWindow(Gtk.Window):
         header.pack_end(self._save)
         self.set_titlebar(header)
 
-        grid = Gtk.Grid(row_spacing=12, column_spacing=12, margin=24)
-        grid.set_size_request(MIN_WIDTH, -1)
-        intro = Gtk.Label(xalign=0, wrap=True, max_width_chars=50)
-        intro.set_markup(
-            "Hold the hotkey, speak, and release: the text is pasted where your cursor is.\n"
-            f'live-dictate needs an <a href="{API_KEYS_URL}">OpenAI API key</a>.'
-        )
-        grid.attach(intro, 0, 0, 2, 1)
-
-        self._key = Gtk.Entry(visibility=False, hexpand=True, activates_default=True)
-        self._key.set_placeholder_text(
-            "Leave empty to keep the current key" if key_present else "sk-..."
-        )
-        self._add_row(grid, 1, "OpenAI API key", self._key)
-
-        language = config.languages[0] if config.languages else ""
-        self._language = _combo(LANGUAGES, language)
-        self._add_row(grid, 2, "Language", self._language)
-
-        self._hotkey = _combo(HOTKEYS, config.hotkey)
-        self._add_row(grid, 3, "Hotkey", self._hotkey)
-
-        self._preview = AuraPreview(config.accent_color)
-        self._accent = AccentPicker(config.accent_color, self._preview.set_accent)
-        self._add_row(grid, 4, "Color", self._accent)
-        grid.attach(self._preview, 0, 5, 2, 1)
-
-        self._status = Gtk.Label(xalign=0, wrap=True, max_width_chars=50)
-        grid.attach(self._status, 0, 6, 2, 1)
-        self.add(grid)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        content.pack_start(self._stack, True, True, 0)
+        self._status = _label()
+        self._status.set_margin_start(24)
+        self._status.set_margin_end(24)
+        self._status.set_margin_bottom(16)
+        content.pack_start(self._status, False, False, 0)
+        self.add(content)
 
         self._save.set_can_default(True)
         self.set_default(self._save)
 
-    @staticmethod
-    def _add_row(grid: Gtk.Grid, row: int, label: str, widget: Gtk.Widget) -> None:
-        grid.attach(Gtk.Label(label=label, xalign=0), 0, row, 1, 1)
-        grid.attach(widget, 1, row, 1, 1)
+    def _general_page(self) -> Gtk.Widget:
+        grid = _grid()
+        grid.attach(
+            _label("Hold the hotkey, speak, and release: the text is pasted where your cursor is."),
+            0,
+            0,
+            2,
+            1,
+        )
+        self._key = Gtk.Entry(visibility=False, hexpand=True, activates_default=True)
+        self._key.set_placeholder_text("sk-...")
+        if self._key_present:
+            key_area = Gtk.Stack()
+            stored = Gtk.Box(spacing=8)
+            stored.pack_start(_label("●●●●●●●● stored in your keyring", dim=True), True, True, 0)
+            replace = Gtk.Button(label="Replace…")
+            replace.connect("clicked", lambda _button: self._replace_key(key_area))
+            stored.pack_end(replace, False, False, 0)
+            key_area.add_named(stored, "stored")
+            key_area.add_named(self._key, "entry")
+            _add_row(grid, 1, "OpenAI API key", key_area)
+        else:
+            _add_row(grid, 1, "OpenAI API key", self._key)
+
+        language = self._config.languages[0] if self._config.languages else ""
+        self._language = _combo(LANGUAGES, language)
+        _add_row(grid, 2, "Language", self._language)
+        self._hotkey = _combo(HOTKEYS, self._config.hotkey)
+        _add_row(grid, 3, "Hotkey", self._hotkey)
+        self._mode = _combo(MODES, self._config.mode)
+        _add_row(grid, 4, "Mode", self._mode)
+        note = _label(
+            markup=f'Get a key on <a href="{API_KEYS_URL}">platform.openai.com</a>. '
+            "live-dictate checks it before saving.",
+            dim=True,
+        )
+        grid.attach(note, 1, 5, 1, 1)
+        return grid
+
+    def _replace_key(self, key_area: Gtk.Stack) -> None:
+        key_area.set_visible_child_name("entry")
+        self._key.grab_focus()
+
+    def _cleanup_page(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=24)
+        self._styles: dict[str, Gtk.RadioButton] = {}
+        group: Gtk.RadioButton | None = None
+        for style, title, description, example in CLEANUP_OPTIONS:
+            button = Gtk.RadioButton.new_from_widget(group)
+            button.get_style_context().add_class("ld-option")
+            texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin_start=6)
+            texts.pack_start(_label(markup=f"<b>{title}</b>"), False, False, 0)
+            texts.pack_start(_label(description, dim=True), False, False, 0)
+            if example:
+                texts.pack_start(
+                    _label(markup=_example_markup(*example), dim=True), False, False, 0
+                )
+            button.add(texts)
+            button.set_active(style == self._config.effective_cleanup_style)
+            box.pack_start(button, False, False, 0)
+            self._styles[style] = button
+            group = group or button
+
+        threshold = Gtk.Box(spacing=8, margin_top=8)
+        threshold.pack_start(Gtk.Label(label="Skip cleanup under"), False, False, 0)
+        self._min_words = Gtk.SpinButton.new_with_range(1, 50, 1)
+        self._min_words.set_value(self._config.cleanup_min_words)
+        threshold.pack_start(self._min_words, False, False, 0)
+        threshold.pack_start(_label("words", dim=True), False, False, 0)
+        box.pack_start(threshold, False, False, 0)
+        return box
+
+    def _appearance_page(self) -> Gtk.Widget:
+        grid = _grid()
+        self._preview = AuraPreview(self._config.accent_color)
+        self._accent = AccentPicker(self._config.accent_color, self._preview.set_accent)
+        _add_row(grid, 0, "Color", self._accent)
+        grid.attach(
+            _label(
+                "Auto follows your desktop accent on GNOME 47 and later, and stays neutral "
+                "otherwise.",
+                dim=True,
+            ),
+            1,
+            1,
+            1,
+            1,
+        )
+        grid.attach(self._preview, 0, 2, 2, 1)
+        return grid
+
+    @property
+    def cleanup_style(self) -> str:
+        return next(style for style, button in self._styles.items() if button.get_active())
 
     def _set_busy(self, busy: bool, message: str = "") -> None:
         self._save.set_sensitive(not busy)
@@ -259,6 +612,7 @@ class SetupWindow(Gtk.Window):
     def _on_save(self, _button: Gtk.Button) -> None:
         key = self._key.get_text().strip()
         if not key and not self._key_present:
+            self._stack.set_visible_child_name("general")
             self._set_busy(False, "Enter your OpenAI API key.")
             return
         if not key:
@@ -281,16 +635,22 @@ class SetupWindow(Gtk.Window):
         return False
 
     def _finish(self, key: str | None) -> None:
+        language = self._language.get_active_id()
         try:
             if key:
                 store_api_key(key)
-            language = self._language.get_active_id()
             update_config_file(
                 self._config_path,
                 {
                     "languages": [language] if language else [],
                     "hotkey": self._hotkey.get_active_id(),
+                    "mode": self._mode.get_active_id(),
                     "accent_color": self._accent.value,
+                    "cleanup_enabled": True,
+                    "cleanup_style": self.cleanup_style,
+                    "cleanup_min_words": self._min_words.get_value_as_int(),
+                    "history_enabled": self.history.enabled.get_active(),
+                    "history_retention_days": self.history.retention.get_value_as_int(),
                 },
             )
         except (OSError, ValueError, subprocess.SubprocessError) as error:
@@ -300,18 +660,35 @@ class SetupWindow(Gtk.Window):
         self.destroy()
 
 
-def run_setup(config_path: Path | None = None) -> bool:
-    """Shows the setup window and returns True once the user saved a working configuration."""
+_open_window: SetupWindow | None = None
+
+
+def open_settings(config_path: Path | None, on_done: Callable[[bool], None]) -> None:
+    """Shows the settings window without blocking; a second call raises the open window."""
+    global _open_window
+    if _open_window is not None:
+        _open_window.present()
+        return
     path = config_path or default_config_path()
-    config = load_config(path)
+
+    def done(saved: bool) -> None:
+        global _open_window
+        _open_window = None
+        on_done(saved)
+
+    _open_window = SetupWindow(load_config(path), path, has_api_key(), done)
+    _open_window.show_all()
+    _open_window.present()
+
+
+def run_setup(config_path: Path | None = None) -> bool:
+    """Shows the settings window and returns True once the user saved a working configuration."""
     result: list[bool] = []
 
     def done(saved: bool) -> None:
         result.append(saved)
         Gtk.main_quit()
 
-    window = SetupWindow(config, path, has_api_key(), done)
-    window.show_all()
-    window.present()
+    open_settings(config_path, done)
     Gtk.main()
     return bool(result and result[0])

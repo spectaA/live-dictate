@@ -14,7 +14,7 @@ import cairo
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk  # noqa: E402
+from gi.repository import GLib, Gtk  # noqa: E402
 
 from live_dictate.overlay import Overlay  # noqa: E402
 
@@ -73,11 +73,15 @@ STATES: dict[str, tuple[str | None, Callable[[Overlay], None]]] = {
 
 
 def render(name: str, accent: str | None, apply: Callable[[Overlay], None], output: Path) -> Path:
-    overlay = Overlay(accent)
+    overlay = Overlay(accent, on_settings=lambda: None)
     apply(overlay)
     window = overlay._window
     window.move(-3000, -3000)
     window.show()
+    # Frames are advanced by hand: the animation timer would relayout the text mid-capture.
+    if overlay._timer is not None:
+        GLib.source_remove(overlay._timer)
+        overlay._timer = None
     for _ in range(3):
         overlay._tick()
         while Gtk.events_pending():

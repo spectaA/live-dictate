@@ -95,12 +95,17 @@ class LiveTranscriber:
         self._url = url
         self._config = config
         self._on_partial = on_partial
+        self.audio_ms = 0
+        self.billed_seconds = 0.0
 
     async def run(self, audio: asyncio.Queue[bytes | None]) -> str:
         """Streams `audio` until a None sentinel, then returns the final transcript.
 
         Returns an empty string, without committing, when less than `min_audio_ms` was captured.
+        Afterwards, `audio_ms` and `billed_seconds` describe this run.
         """
+        self.audio_ms = 0
+        self.billed_seconds = 0.0
         headers = {"Authorization": f"Bearer {self._api_key}"}
         ws = await connect(self._url, additional_headers=headers, max_size=None)
         receiver: asyncio.Task[None] | None = None
@@ -110,7 +115,8 @@ class LiveTranscriber:
             committed = asyncio.Event()
             receiver = asyncio.create_task(self._receive(ws, assembler, committed))
             sent_bytes = await self._send_audio(ws, audio, receiver)
-            if pcm_duration_ms(sent_bytes) < self._config.min_audio_ms:
+            self.audio_ms = pcm_duration_ms(sent_bytes)
+            if self.audio_ms < self._config.min_audio_ms:
                 return ""
             await ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
             committed.set()
@@ -159,6 +165,9 @@ class LiveTranscriber:
                 assembler.add_committed(event["item_id"])
             elif kind == "conversation.item.input_audio_transcription.completed":
                 assembler.complete(event["item_id"], event.get("transcript", ""))
+                usage = event.get("usage") or {}
+                if usage.get("type") == "duration":
+                    self.billed_seconds += float(usage.get("seconds", 0))
                 self._on_partial(assembler.text())
             elif kind == "conversation.item.input_audio_transcription.failed":
                 detail = event.get("error", {})

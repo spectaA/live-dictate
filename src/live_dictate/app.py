@@ -3,17 +3,21 @@ from __future__ import annotations
 import asyncio
 import enum
 import logging
+import os
 import signal
+import sys
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 from gi.repository import GLib
 
+from . import history
 from .accent import resolve_accent
 from .audio import Recorder, rms
-from .cleanup import Cleaner, needs_cleanup
-from .config import Config
+from .cleanup import Cleaner, CleanupResult, needs_cleanup
+from .config import Config, default_history_path
 from .hotkey import HotkeyListener
 from .injector import Injector
 from .overlay import Overlay, level_from_rms
@@ -87,8 +91,12 @@ class App:
         self._task: asyncio.Task[None] | None = None
         self._finishing: asyncio.Task[None] | None = None
         self._released_at = 0.0
+        self._history = default_history_path() if config.history_enabled else None
+        self.paused = False
 
     def on_hotkey_down(self) -> None:
+        if self.paused:
+            return
         if self._state is State.IDLE:
             self._start()
         elif self._state is State.RECORDING and self._config.mode == "toggle":
@@ -102,6 +110,14 @@ class App:
         if self._task and self._state is not State.IDLE:
             log.info("dictation cancelled")
             self._task.cancel()
+
+    def pause(self) -> None:
+        """Cancels any dictation and ignores the hotkey, e.g. while the settings window is open."""
+        self.paused = True
+        self.on_escape()
+
+    def resume(self) -> None:
+        self.paused = False
 
     def _start(self) -> None:
         loop = asyncio.get_running_loop()
@@ -135,46 +151,127 @@ class App:
             audio.put_nowait(None)
 
     async def _session(self, audio: asyncio.Queue[bytes | None]) -> None:
+        transcript = text = ""
+        cleanup = "off" if self._cleaner is None else "skipped"
+        result: CleanupResult | None = None
+        transcript_s: float | None = None
+        cleanup_s: float | None = None
+        outcome, error_message = "pasted", None
         try:
             transcript = await self._transcriber.run(audio)
             transcribed_at = time.monotonic()
+            transcript_s = transcribed_at - self._released_at
             if not transcript:
                 self._ui.hide()
+                outcome = "empty"
                 return
             text = transcript
             if self._cleaner and needs_cleanup(transcript, self._config.cleanup_min_words):
                 self._ui.cleaning()
-                text = await self._cleaner.clean(transcript)
+                result = await self._cleaner.clean(transcript)
+                cleanup_s = time.monotonic() - transcribed_at
+                cleanup = "failed" if result.failed else "done"
+                text = result.text
             self._ui.finished(transcript, text)
             log.info(
                 "latency after release: transcript %.2fs, cleanup %.2fs",
-                transcribed_at - self._released_at,
-                time.monotonic() - transcribed_at,
+                transcript_s,
+                cleanup_s or 0.0,
             )
             log.debug("raw: %s", transcript)
             log.debug("clean: %s", text)
             await asyncio.get_running_loop().run_in_executor(None, self._output, text)
         except asyncio.CancelledError:
             self._ui.hide()
+            outcome = "cancelled"
         except Exception as error:
             log.exception("dictation failed")
             self._ui.error(str(error) or type(error).__name__)
+            outcome, error_message = "error", str(error) or type(error).__name__
         finally:
             await self._stop_recorder()
             self._audio = None
             self._task = None
             self._state = State.IDLE
+            if self._history and outcome != "empty":
+                self._record(
+                    self._history,
+                    outcome,
+                    transcript,
+                    text,
+                    cleanup,
+                    transcript_s,
+                    cleanup_s,
+                    result,
+                    error_message,
+                )
+
+    def _record(
+        self,
+        path: Path,
+        outcome: str,
+        raw: str,
+        text: str,
+        cleanup: str,
+        transcript_s: float | None,
+        cleanup_s: float | None,
+        result: CleanupResult | None,
+        error: str | None,
+    ) -> None:
+        entry = history.make_entry(
+            config=self._config,
+            outcome=outcome,
+            raw=raw,
+            text=text if outcome == "pasted" else "",
+            cleanup=cleanup,
+            audio_ms=self._transcriber.audio_ms,
+            billed_seconds=self._transcriber.billed_seconds,
+            transcript_s=transcript_s,
+            cleanup_s=cleanup_s,
+            result=result,
+            error=error,
+        )
+        try:
+            history.append(path, entry)
+        except OSError:
+            log.exception("could not write the history")
+
+
+def _restart_process() -> None:
+    """Re-executes the daemon in place so new settings apply; systemd keeps tracking the PID."""
+    flags = ["-s"] if sys.flags.no_user_site else []
+    os.execv(sys.executable, [sys.executable, *flags, "-m", "live_dictate", *sys.argv[1:]])  # noqa: S606
 
 
 def run_app(
-    config: Config, api_key: str, cleanup: bool, output: Callable[[str], None] | None
+    config: Config,
+    api_key: str,
+    cleanup: bool,
+    output: Callable[[str], None] | None,
+    config_path: Path | None = None,
 ) -> None:
     from gi.repository import Gtk
+
+    from .setup_window import open_settings
+
+    if config.history_enabled:
+        removed = history.prune(default_history_path(), config.history_retention_days)
+        if removed:
+            log.info("removed %d history entries past the retention period", removed)
 
     loop = asyncio.new_event_loop()
     threading.Thread(target=loop.run_forever, name="asyncio", daemon=True).start()
 
-    ui = OverlayBridge(Overlay(resolve_accent(config.accent_color)))
+    def after_settings(saved: bool) -> None:
+        if saved:
+            _restart_process()
+        loop.call_soon_threadsafe(app.resume)
+
+    def show_settings() -> None:
+        loop.call_soon_threadsafe(app.pause)
+        open_settings(config_path, after_settings)
+
+    ui = OverlayBridge(Overlay(resolve_accent(config.accent_color), on_settings=show_settings))
     app = App(config, api_key, ui, cleanup, output)
 
     def dispatch(handler: Callable[[], None]) -> Callable[[], None]:

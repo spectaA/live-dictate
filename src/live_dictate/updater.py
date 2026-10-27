@@ -69,7 +69,8 @@ def is_package_install() -> bool:
 
 
 def install_deb(path: Path) -> None:
-    command = ["apt-get", "install", "--yes", str(path)]
+    # pkexec drops the environment, so the variable is passed through env(1).
+    command = ["env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "--yes", str(path)]
     if os.geteuid() != 0:
         command.insert(0, "sudo" if sys.stdin.isatty() else "pkexec")
     # The package's postinst restarts the running daemons of logged-in users.

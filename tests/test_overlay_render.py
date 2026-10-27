@@ -90,3 +90,27 @@ def test_finish_sequence_ends_hidden() -> None:
     assert overlay._tick() is False
     assert not overlay._window.get_visible()
     overlay._window.destroy()
+
+
+def test_settings_gear_reports_clicks() -> None:
+    from live_dictate.overlay import Overlay
+
+    clicks: list[bool] = []
+    overlay = Overlay(on_settings=lambda: clicks.append(True))
+    overlay.listening()
+    assert overlay.view.settings.get_visible()
+    overlay.view.settings.clicked()
+    assert clicks == [True]
+    overlay.finished("bonjour à tous", "bonjour à tous")
+    assert not overlay.view.settings.get_visible()
+    overlay.hide()
+    overlay._window.destroy()
+
+
+def test_overlay_without_settings_hides_the_gear() -> None:
+    from live_dictate.overlay import Overlay
+
+    overlay = Overlay()
+    overlay.listening()
+    assert not overlay.view.settings.get_visible()
+    overlay._window.destroy()
