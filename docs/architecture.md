@@ -30,6 +30,7 @@ The `pynput` and `recorder` threads hand work to the asyncio loop with `loop.cal
 - **Paste through the clipboard.** `xdotool type` mangles non-ASCII characters and is slow on long text.
 - **Cleanup with `reasoning.effort = none` and the Fast service tier.** The task is simple, and latency matters more than reasoning.
 - **Fall back to the raw transcript.** A failed or slow cleanup must never lose a dictation.
+- **Save before pasting.** The transcript is written to `recent.json` as soon as it is final, then updated with the cleaned text and the outcome. Cleanup and paste can fail, and the overlay gear starts a throwaway dictation, so the file keeps 10 entries and never saves a dictation without text.
 - **Trim the overlay by whole lines.** Dropping leading lines keeps the remaining lines wrapped exactly as before, so the text scrolls up instead of shifting sideways.
 - **50 ms grace period on key release.** X11 auto-repeat sends release and press pairs while a regular key is held. Modifier keys such as Ctrl are not affected.
 - **The overlay card is drawn with cairo, not CSS.** Cairo has no conic gradient, so the ring paints colored slices, rendered once per frame into an opaque group to avoid seams, then clipped to the ring. The glow stacks translucent bands, since GTK 3 cannot blur behind a window.

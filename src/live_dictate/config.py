@@ -65,6 +65,7 @@ class Config:
     cleanup_model: str = "gpt-6-luna"
     cleanup_service_tier: str = "fast"
     cleanup_timeout_s: float = 3.0
+    cleanup_timeout_per_word_s: float = 0.01
     cleanup_min_words: int = 5
     min_audio_ms: int = 300
     paste_restore_delay_s: float = 0.5

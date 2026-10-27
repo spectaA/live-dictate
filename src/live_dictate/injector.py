@@ -8,6 +8,7 @@ import time
 log = logging.getLogger(__name__)
 
 WM_CLASS_PATTERN = re.compile(r'"([^"]*)"')
+MAX_RESTORE_DELAY_S = 2.0
 
 
 def parse_wm_class(xprop_output: str) -> list[str]:
@@ -51,6 +52,11 @@ def _write_clipboard(text: str) -> None:
     )
 
 
+def restore_delay(base_s: float, text: str) -> float:
+    """Slow apps read a long paste late; restoring too early would paste the old clipboard."""
+    return min(MAX_RESTORE_DELAY_S, max(base_s, base_s + len(text) / 4000))
+
+
 class Injector:
     def __init__(self, terminal_classes: list[str], restore_delay_s: float) -> None:
         self._terminal_classes = terminal_classes
@@ -62,7 +68,7 @@ class Injector:
         _write_clipboard(text)
         subprocess.run(["xdotool", "key", "--clearmodifiers", keys], check=False, timeout=2)
         # The target app reads the clipboard asynchronously after the key event.
-        time.sleep(self._restore_delay_s)
+        time.sleep(restore_delay(self._restore_delay_s, text))
         if previous is not None:
             _write_clipboard(previous)
         log.debug("pasted %d chars with %s", len(text), keys)

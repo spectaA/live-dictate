@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-27
+
+### Added
+
+- The last 10 dictations are saved on disk before the cleanup and the paste, even with the history off. A cancelled or failed dictation keeps the text shown live.
+- Recent tab in the settings window to copy a saved dictation back.
+- `live-dictate last [N]` prints a saved dictation.
+
+### Fixed
+
+- Long dictations lost their cleanup: the cleanup timeout now grows with the number of words.
+- The previous clipboard is restored later after a long paste, so slow apps no longer paste the old clipboard.
+
 ## [0.4.0] - 2026-10-27
 
 ### Added
@@ -69,7 +82,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `live-dictate update` to install the latest release with checksum verification.
 - Debian package with a systemd user service, built and published by GitHub Actions.
 
-[Unreleased]: https://github.com/spectaA/live-dictate/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/spectaA/live-dictate/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/spectaA/live-dictate/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/spectaA/live-dictate/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/spectaA/live-dictate/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/spectaA/live-dictate/compare/v0.1.0...v0.2.0

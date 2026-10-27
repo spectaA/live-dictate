@@ -164,6 +164,17 @@ def _stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def _last(args: argparse.Namespace) -> int:
+    from . import recent
+
+    entries = recent.load(recent.default_recent_path())
+    if not 1 <= args.index <= len(entries):
+        print("No saved dictation.", file=sys.stderr)
+        return 1
+    print(entries[args.index - 1]["text"])
+    return 0
+
+
 def _update(args: argparse.Namespace) -> int:
     try:
         with github_client() as client:
@@ -197,6 +208,9 @@ def build_parser() -> argparse.ArgumentParser:
     stats.add_argument("--days", type=int, default=30, help="period in days, 0 for all time")
     stats.add_argument("--last", type=int, default=0, help="also print the last N dictations")
 
+    last = commands.add_parser("last", help="print a saved dictation, even one not pasted")
+    last.add_argument("index", type=int, nargs="?", default=1, help="1 is the most recent")
+
     upgrade = commands.add_parser("update", help="install the latest release from GitHub")
     upgrade.add_argument("--check", action="store_true", help="only report available updates")
     return parser
@@ -218,6 +232,8 @@ def main() -> None:
         sys.exit(_setup(args))
     if args.command == "stats":
         sys.exit(_stats(args))
+    if args.command == "last":
+        sys.exit(_last(args))
     if args.command == "update":
         sys.exit(_update(args))
     if args.command is None:

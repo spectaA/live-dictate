@@ -13,7 +13,7 @@ from pathlib import Path
 
 from gi.repository import GLib
 
-from . import history
+from . import history, recent
 from .accent import resolve_accent
 from .audio import Recorder, rms
 from .cleanup import Cleaner, CleanupResult, needs_cleanup
@@ -78,10 +78,11 @@ class App:
         ui: OverlayBridge,
         cleanup: bool,
         output: Callable[[str], None] | None,
+        recent_path: Path | None = None,
     ) -> None:
         self._config = config
         self._ui = ui
-        self._transcriber = LiveTranscriber(api_key, config, ui.partial)
+        self._transcriber = LiveTranscriber(api_key, config, self._on_partial)
         self._cleaner = Cleaner(api_key, config) if cleanup else None
         injector = Injector(config.terminal_classes, config.paste_restore_delay_s)
         self._output = output or injector.paste
@@ -92,7 +93,25 @@ class App:
         self._finishing: asyncio.Task[None] | None = None
         self._released_at = 0.0
         self._history = default_history_path() if config.history_enabled else None
+        self._recent = recent_path
+        self._partial = ""
         self.paused = False
+
+    def _on_partial(self, text: str) -> None:
+        self._partial = text
+        self._ui.partial(text)
+
+    def _save_recent(self, entry_id: str | None, text: str, outcome: str) -> str | None:
+        """Creates or updates the recovery entry; a disk error must never stop the paste."""
+        if self._recent is None or not text:
+            return entry_id
+        try:
+            if entry_id is None:
+                return recent.add(self._recent, text, outcome)
+            recent.update(self._recent, entry_id, text=text, outcome=outcome)
+        except OSError:
+            log.exception("could not save the recovery copy")
+        return entry_id
 
     def on_hotkey_down(self) -> None:
         if self.paused:
@@ -157,6 +176,8 @@ class App:
         transcript_s: float | None = None
         cleanup_s: float | None = None
         outcome, error_message = "pasted", None
+        saved: str | None = None
+        self._partial = ""
         try:
             transcript = await self._transcriber.run(audio)
             transcribed_at = time.monotonic()
@@ -166,6 +187,8 @@ class App:
                 outcome = "empty"
                 return
             text = transcript
+            # Saved before the cleanup and the paste, which are the steps that can fail.
+            saved = self._save_recent(None, transcript, "transcribed")
             if self._cleaner and needs_cleanup(transcript, self._config.cleanup_min_words):
                 self._ui.cleaning()
                 result = await self._cleaner.clean(transcript)
@@ -189,6 +212,11 @@ class App:
             self._ui.error(str(error) or type(error).__name__)
             outcome, error_message = "error", str(error) or type(error).__name__
         finally:
+            if saved:
+                self._save_recent(saved, text, outcome)
+            else:
+                # A cancelled or failed dictation keeps the text shown live.
+                self._save_recent(None, self._partial, outcome)
             await self._stop_recorder()
             self._audio = None
             self._task = None
@@ -272,7 +300,7 @@ def run_app(
         open_settings(config_path, after_settings)
 
     ui = OverlayBridge(Overlay(resolve_accent(config.accent_color), on_settings=show_settings))
-    app = App(config, api_key, ui, cleanup, output)
+    app = App(config, api_key, ui, cleanup, output, recent.default_recent_path())
 
     def dispatch(handler: Callable[[], None]) -> Callable[[], None]:
         def call() -> None:

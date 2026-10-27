@@ -14,6 +14,7 @@ Push-to-talk dictation for Linux X11 desktops. Hold a key, speak, release: your 
 
 - **Live transcript** while you speak, streamed by OpenAI [`gpt-live-transcribe`](https://developers.openai.com/api/docs/guides/realtime-transcription).
 - **Visible cleanup** that removes filler words, stutters and false starts, and fixes punctuation, without rephrasing you. You see the removed words struck out before the text is pasted. Three styles: Light, Standard and Polished.
+- **Nothing is lost**: the last 10 dictations are saved before the paste. Copy one back from the Recent tab of the settings, or with `live-dictate last`.
 - **History and statistics**, opt-in and kept on your computer only: what you said, what was pasted, latency and estimated cost.
 - **Pastes anywhere**: browsers, editors, chat apps and terminals (`Ctrl+Shift+V` is used in terminals). Your clipboard is restored afterwards.
 - **Aura overlay** on the monitor under your pointer: its glowing ring reacts to your voice and follows your accent color. It never steals the focus.
@@ -63,6 +64,8 @@ Commands:
 live-dictate setup             # open the settings window
 live-dictate stats             # summarize the last 30 days of history
 live-dictate stats --last 5    # also print the last 5 dictations
+live-dictate last              # print the last dictation, even if it was not pasted
+live-dictate last 2 | xclip -selection clipboard   # copy the one before
 live-dictate check --api       # diagnose tools, key, microphone and the cleanup call
 live-dictate run --dry-run     # print the text instead of pasting it
 live-dictate run --no-cleanup  # paste the raw transcript
@@ -87,6 +90,7 @@ cleanup_style = "standard"              # off, light, standard or polished
 cleanup_model = "gpt-6-luna"
 cleanup_service_tier = "fast"           # "default" is cheaper and slower
 cleanup_timeout_s = 3.0                 # the raw transcript is pasted on timeout
+cleanup_timeout_per_word_s = 0.01       # extra time for long dictations
 cleanup_min_words = 5                   # shorter dictations skip the cleanup
 min_audio_ms = 300                      # ignore accidental taps
 paste_restore_delay_s = 0.5
@@ -104,7 +108,8 @@ Restart the service after editing the file: `systemctl --user restart live-dicta
 
 - Audio is streamed to OpenAI for transcription, and the transcript is sent to OpenAI for cleanup. Cleanup requests are made with `store: false`. Review [OpenAI's data policies](https://openai.com/policies/) before dictating sensitive content.
 - The history is off by default. When you turn it on, each dictation is appended to `~/.local/share/live-dictate/history.jsonl`, readable by you only, and entries older than the retention period are deleted. It contains your dictated text: keep that in mind before turning it on.
-- Without the history, nothing is written to disk. Dictated text only appears in logs with `-v`.
+- The last 10 dictations are always kept in `~/.local/state/live-dictate/recent.json`, readable by you only, so a failed paste never loses your words. Clear them from the Recent tab of the settings.
+- Dictated text only appears in logs with `-v`.
 - Costs in the history are estimates from a built-in price table. The raw usage (billed audio seconds and tokens) is stored next to them.
 - At OpenAI's current prices, transcription costs about $0.017 per minute of audio. Cleanup costs a fraction of a cent per dictation.
 

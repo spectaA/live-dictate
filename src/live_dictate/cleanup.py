@@ -69,6 +69,11 @@ def parse_result(payload: dict[str, Any]) -> CleanupResult:
     )
 
 
+def cleanup_timeout(config: Config, transcript: str) -> float:
+    """Long dictations take longer to rewrite, so the timeout grows with the word count."""
+    return config.cleanup_timeout_s + config.cleanup_timeout_per_word_s * len(transcript.split())
+
+
 class Cleaner:
     def __init__(self, api_key: str, config: Config) -> None:
         self._config = config
@@ -81,12 +86,15 @@ class Cleaner:
         """Falls back to the raw transcript, flagged as failed, if the call fails or times out."""
         try:
             response = await self._client.post(
-                RESPONSES_URL, json=build_request(self._config, transcript)
+                RESPONSES_URL,
+                json=build_request(self._config, transcript),
+                timeout=cleanup_timeout(self._config, transcript),
             )
             response.raise_for_status()
             result = parse_result(response.json())
         except (httpx.HTTPError, CleanupError, ValueError) as error:
-            log.warning("cleanup failed, pasting raw transcript: %s", error)
+            # Timeouts have an empty message.
+            log.warning("cleanup failed, pasting raw transcript: %r", error)
             return CleanupResult(transcript, failed=True)
         # A ramp-rate limit silently downgrades the request to the standard tier.
         if self._config.cleanup_service_tier != "default" and result.service_tier == "default":

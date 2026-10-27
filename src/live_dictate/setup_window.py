@@ -15,10 +15,11 @@ import httpx
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
+gi.require_version("Pango", "1.0")
 gi.require_version("PangoCairo", "1.0")
-from gi.repository import Gdk, Gio, GLib, Gtk, PangoCairo  # noqa: E402
+from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo  # noqa: E402
 
-from . import aura, history  # noqa: E402
+from . import aura, history, recent  # noqa: E402
 from .accent import resolve_accent  # noqa: E402
 from .config import (  # noqa: E402
     Config,
@@ -74,6 +75,13 @@ FRAME_MS = 33
 WINDOW_WIDTH = 600
 CHART_HEIGHT = 64
 RECENT_COUNT = 3
+RECOVERY_HEIGHT = 380
+OUTCOMES = {
+    "pasted": "pasted",
+    "transcribed": "not pasted",
+    "cancelled": "cancelled",
+    "error": "failed",
+}
 
 MODES = [("hold", "Hold to talk"), ("toggle", "Press to start, press again to stop")]
 
@@ -461,6 +469,83 @@ class HistoryPage(Gtk.Box):
         return row
 
 
+class RecoveryPage(Gtk.Box):
+    """Lists the last dictations kept by `recent`, whatever the history setting."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin=24)
+        self._path = path
+        top = Gtk.Box(spacing=12)
+        top.pack_start(
+            _label(
+                f"The last {recent.KEEP} dictations stay on this computer, readable by you "
+                "only, even with the history off. Copy one back if a paste went wrong.",
+                dim=True,
+            ),
+            True,
+            True,
+            0,
+        )
+        self.clear = Gtk.Button(label="Clear", valign=Gtk.Align.START)
+        self.clear.connect("clicked", self._on_clear)
+        top.pack_end(self.clear, False, False, 0)
+        self.pack_start(top, False, False, 0)
+
+        self.rows = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
+        scroller.set_min_content_height(RECOVERY_HEIGHT)
+        scroller.add(self.rows)
+        self.pack_start(scroller, True, True, 0)
+        self.refresh()
+
+    def _on_clear(self, _button: Gtk.Button) -> None:
+        recent.clear(self._path)
+        self.refresh()
+
+    def refresh(self) -> None:
+        for child in self.rows.get_children():
+            self.rows.remove(child)
+        entries = recent.load(self._path)
+        for entry in entries:
+            self.rows.pack_start(self._row(entry), False, False, 0)
+        if not entries:
+            self.rows.pack_start(_label("No dictation saved yet.", dim=True), False, False, 0)
+        self.clear.set_sensitive(bool(entries))
+        self.rows.show_all()
+
+    @staticmethod
+    def _row(entry: dict[str, Any]) -> Gtk.Widget:
+        text = str(entry["text"])
+        row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        row.get_style_context().add_class("ld-recent")
+        meta = Gtk.Box(spacing=8)
+        try:
+            moment = f"{datetime.fromisoformat(str(entry['time'])).astimezone():%b %d %H:%M}"
+        except ValueError:
+            moment = ""
+        outcome = OUTCOMES.get(str(entry.get("outcome")), str(entry.get("outcome")))
+        words = len(text.split())
+        meta.pack_start(_label(f"{moment} · {outcome} · {words} words", dim=True), True, True, 0)
+        copy = Gtk.Button(label="Copy")
+
+        def on_copy(button: Gtk.Button) -> None:
+            clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+            clipboard.set_text(text, -1)
+            # Hands the text to a clipboard manager, if any, before this window closes.
+            clipboard.store()
+            button.set_label("Copied")
+
+        copy.connect("clicked", on_copy)
+        meta.pack_end(copy, False, False, 0)
+        row.pack_start(meta, False, False, 0)
+        body = _label(text)
+        body.set_selectable(True)
+        body.set_lines(4)
+        body.set_ellipsize(Pango.EllipsizeMode.END)
+        row.pack_start(body, False, False, 0)
+        return row
+
+
 class SetupWindow(Gtk.Window):
     def __init__(
         self,
@@ -469,6 +554,7 @@ class SetupWindow(Gtk.Window):
         key_present: bool,
         on_done: Callable[[bool], None],
         history_path: Path | None = None,
+        recent_path: Path | None = None,
     ) -> None:
         super().__init__(title="live-dictate")
         _install_css()
@@ -487,6 +573,8 @@ class SetupWindow(Gtk.Window):
         self._stack.add_titled(self._appearance_page(), "appearance", "Appearance")
         self.history = HistoryPage(config, history_path or default_history_path())
         self._stack.add_titled(self.history, "history", "History")
+        self.recovery = RecoveryPage(recent_path or recent.default_recent_path())
+        self._stack.add_titled(self.recovery, "recent", "Recent")
 
         header = Gtk.HeaderBar(custom_title=Gtk.StackSwitcher(stack=self._stack))
         cancel = Gtk.Button(label="Cancel")
