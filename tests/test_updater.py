@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import subprocess
 from pathlib import Path
 
 import httpx
@@ -95,3 +96,20 @@ def test_update_rejects_checksum_mismatch(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(updater, "is_package_install", lambda: True)
     with pytest.raises(UpdateError, match="checksum mismatch"):
         update(_client(_bump(__version__), digest="0" * 64), check_only=False)
+
+
+@pytest.mark.parametrize(
+    ("returncode", "message"),
+    [(126, "password dialog was closed"), (100, r"package install failed \(exit 100\)")],
+)
+def test_install_failure_is_a_clear_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, returncode: int, message: str
+) -> None:
+    def fail(command: list[str], check: bool) -> None:
+        raise subprocess.CalledProcessError(returncode, command)
+
+    monkeypatch.setattr(updater.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(updater.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(updater.subprocess, "run", fail)
+    with pytest.raises(UpdateError, match=message):
+        updater.install_deb(tmp_path / "package.deb")

@@ -19,6 +19,8 @@ LATEST_RELEASE_URL = f"https://api.github.com/repos/{REPOSITORY}/releases/latest
 INSTALL_PREFIX = Path("/opt/live-dictate")
 CHECKSUMS_ASSET = "SHA256SUMS"
 SERVICE = "live-dictate.service"
+# pkexec exit codes for a dismissed or refused password dialog.
+PKEXEC_NOT_AUTHORIZED = (126, 127)
 
 
 class UpdateError(RuntimeError):
@@ -71,10 +73,21 @@ def is_package_install() -> bool:
 def install_deb(path: Path) -> None:
     # pkexec drops the environment, so the variable is passed through env(1).
     command = ["env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "--yes", str(path)]
+    elevate = None
     if os.geteuid() != 0:
-        command.insert(0, "sudo" if sys.stdin.isatty() else "pkexec")
+        elevate = "sudo" if sys.stdin.isatty() else "pkexec"
+        command.insert(0, elevate)
     # The package's postinst restarts the running daemons of logged-in users.
-    subprocess.run(command, check=True)
+    try:
+        subprocess.run(command, check=True)
+    except FileNotFoundError as error:
+        raise UpdateError(f"{error.filename} is not installed") from error
+    except subprocess.CalledProcessError as error:
+        if elevate == "pkexec" and error.returncode in PKEXEC_NOT_AUTHORIZED:
+            raise UpdateError(
+                "the password dialog was closed or refused; nothing was installed"
+            ) from error
+        raise UpdateError(f"the package install failed (exit {error.returncode})") from error
 
 
 def _download_verified(client: httpx.Client, release: Release, directory: Path) -> Path:

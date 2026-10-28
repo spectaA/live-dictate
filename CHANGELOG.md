@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-28
+
+### Fixed
+
+- `live-dictate update` prints a clear message instead of a traceback when the password dialog is closed or the install fails.
+
 ## [0.5.0] - 2026-10-27
 
 ### Added
@@ -94,7 +100,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `live-dictate update` to install the latest release with checksum verification.
 - Debian package with a systemd user service, built and published by GitHub Actions.
 
-[Unreleased]: https://github.com/spectaA/live-dictate/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/spectaA/live-dictate/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/spectaA/live-dictate/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/spectaA/live-dictate/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/spectaA/live-dictate/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/spectaA/live-dictate/compare/v0.3.0...v0.4.0
