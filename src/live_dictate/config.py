@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
+from . import shortcuts
 from .accent import HEX_COLOR
 
 if sys.version_info >= (3, 11):
@@ -19,6 +20,9 @@ else:
 KEYRING_ATTRIBUTES = ("service", "live-dictate", "account", "openai")
 CLEANUP_STYLES = ("off", "light", "standard", "polished")
 MAX_LINES_LIMIT = 20
+SHORTCUT_FIELDS = ("hotkey", "lock_key", "finish_key", "cancel_key")
+# The Realtime API rejects a session whose keywords contain these characters.
+KEYWORD_FORBIDDEN = "<>\r\n"
 
 DEFAULT_TERMINAL_CLASSES = (
     "gnome-terminal-server",
@@ -54,6 +58,10 @@ def _default_languages() -> list[str]:
 @dataclass
 class Config:
     hotkey: str = "<ctrl_r>"
+    # Pressed while holding the hotkey; empty leaves double-tap as the only way to lock.
+    lock_key: str = "<space>"
+    finish_key: str = "<enter>"
+    cancel_key: str = "<esc>"
     mode: str = "hold"
     languages: list[str] = field(default_factory=_default_languages)
     transcription_model: str = "gpt-live-transcribe"
@@ -90,8 +98,24 @@ class Config:
             raise ValueError("history_retention_days must be at least 1")
         if not 1 <= self.max_lines <= MAX_LINES_LIMIT:
             raise ValueError(f"max_lines must be between 1 and {MAX_LINES_LIMIT}")
+        self._check_shortcuts()
+        for keyword in self.keywords:
+            if not keyword.strip() or any(char in keyword for char in KEYWORD_FORBIDDEN):
+                raise ValueError(
+                    f"keywords cannot be empty or contain <, > or a line break: {keyword!r}"
+                )
         if self.accent_color and not HEX_COLOR.match(self.accent_color):
             raise ValueError(f"accent_color must be empty or #rrggbb, got {self.accent_color!r}")
+
+    def _check_shortcuts(self) -> None:
+        if not self.hotkey:
+            raise ValueError("hotkey cannot be empty")
+        for name in SHORTCUT_FIELDS:
+            shortcuts.parse(getattr(self, name))
+        for index, first in enumerate(SHORTCUT_FIELDS):
+            for second in SHORTCUT_FIELDS[index + 1 :]:
+                if shortcuts.overlaps(getattr(self, first), getattr(self, second)):
+                    raise ValueError(f"{first} and {second} overlap")
 
 
 def default_config_path() -> Path:
@@ -140,6 +164,8 @@ def dump_config(values: dict[str, Any]) -> str:
 def update_config_file(path: Path, updates: dict[str, Any]) -> None:
     """Merges `updates` into the file, keeping other keys; comments are not preserved."""
     values = {**read_config_file(path), **updates}
+    # A file the daemon cannot load would stop it at the next start.
+    Config(**values)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(dump_config(values), encoding="utf-8")
 

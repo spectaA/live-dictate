@@ -50,6 +50,8 @@ live-dictate then starts by itself at every login. If you skip `live-dictate set
 | Cancel the current dictation | **Esc** |
 | Open the settings | Click the gear in the overlay |
 
+These are the default keys. Change any of them in the Shortcuts tab of the settings: click a shortcut, then press a key or a combination. The tab warns you when two shortcuts overlap, or when another app already uses one, such as a launcher on Ctrl+Space.
+
 The overlay shows what is happening:
 
 | Listening | Locked |
@@ -58,7 +60,9 @@ The overlay shows what is happening:
 | **Cleaning up** | **Pasted** |
 | ![Filler words struck out during cleanup](docs/assets/overlay-removing.png) | ![Pasted](docs/assets/overlay-pasted.png) |
 
-While a dictation is locked, Enter and Esc go to live-dictate only, so Enter never sends a half-dictated chat message. Space is held back the same way while you hold the hotkey.
+While a dictation is locked, the finish and cancel keys go to live-dictate only, so Enter never sends a half-dictated chat message. The lock key is held back the same way while you hold the hotkey, and a hotkey such as F9 never reaches the focused app.
+
+Words that are often misspelled, such as product names and jargon, go in the Dictionary tab. The transcription and the cleanup both receive this list.
 
 The ring is neutral gray by default. On GNOME 47 and later it follows your desktop accent color; on any desktop you can pick a color in `live-dictate setup`.
 
@@ -84,12 +88,15 @@ live-dictate update            # install the latest release
 
 ```toml
 hotkey = "<ctrl_r>"                     # pynput syntax, e.g. "<ctrl>+<alt>+d"
+lock_key = "<space>"                    # pressed while holding the hotkey; "" disables it
+finish_key = "<enter>"                  # finishes a locked dictation
+cancel_key = "<esc>"
 mode = "hold"                           # "hold" (push-to-talk) or "toggle"
 languages = ["en"]                      # defaults to your system language; [] auto-detects
 transcription_model = "gpt-live-transcribe"
 transcription_delay = "low"             # minimal, low, medium, high, xhigh
 transcription_prompt = ""               # context, e.g. "Software engineering stand-up"
-keywords = ["Kubernetes", "PostgreSQL"] # names and jargon to spell correctly
+keywords = ["Kubernetes", "PostgreSQL"] # the dictionary: names and jargon to spell correctly
 cleanup_style = "standard"              # off, light, standard or polished
 cleanup_model = "gpt-6-luna"
 cleanup_service_tier = "fast"           # "default" is cheaper and slower

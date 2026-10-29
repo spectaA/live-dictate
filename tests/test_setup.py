@@ -141,8 +141,11 @@ def test_setup_window_saves_every_setting(tmp_path: Path, monkeypatch: pytest.Mo
     assert window._language.get_active_id() == ""
     assert window.cleanup_style == "standard"
     window._language.set_active_id("fr")
-    window._hotkey.set_active_id("<f9>")
-    window._mode.set_active_id("toggle")
+    window.shortcuts.buttons["hotkey"].set_spec("<f9>")
+    window.shortcuts.buttons["finish_key"].set_spec("<ctrl>+<enter>")
+    window.shortcuts.mode.set_active_id("toggle")
+    window.dictionary.entry.set_text(" Coolify ")
+    window.dictionary.add_word()
     window._accent.select("#fbb86c")
     window._styles["light"].set_active(True)
     window._min_words.set_value(3)
@@ -155,6 +158,7 @@ def test_setup_window_saves_every_setting(tmp_path: Path, monkeypatch: pytest.Mo
     assert results == [True]
     config = load_config(path)
     assert (config.languages, config.hotkey, config.mode) == (["fr"], "<f9>", "toggle")
+    assert (config.finish_key, config.keywords) == ("<ctrl>+<enter>", ["Coolify"])
     assert (config.accent_color, config.max_lines) == ("#fbb86c", 8)
     assert (config.cleanup_style, config.cleanup_min_words) == ("light", 3)
     assert (config.history_enabled, config.history_retention_days) == (True, 7)

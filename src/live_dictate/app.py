@@ -15,14 +15,14 @@ from typing import Protocol
 from gi.repository import GLib
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-from . import history, recent
+from . import history, recent, shortcuts
 from .accent import resolve_accent
 from .audio import Recorder, rms
 from .cleanup import Cleaner, CleanupResult, needs_cleanup
 from .config import Config, default_history_path
 from .hotkey import HotkeyListener
 from .injector import Injector
-from .keygrab import LOCKED_KEYS, SPACE_KEYS, KeyGrab
+from .keygrab import Grab, KeyGrab
 from .overlay import Overlay, level_from_rms
 from .transcriber import LiveTranscriber, TranscriptionError
 
@@ -34,16 +34,25 @@ DOUBLE_TAP_S = 0.35
 
 
 class Keys(Protocol):
-    def set(self, keysyms: Iterable[int]) -> None: ...
+    def set(self, grabs: Iterable[Grab]) -> int: ...
 
 
 class NoKeys:
-    def set(self, keysyms: Iterable[int]) -> None:
-        pass
+    def set(self, grabs: Iterable[Grab]) -> int:
+        return 0
 
 
-def space_locks(config: Config) -> bool:
-    return config.mode == "hold" and "<space>" not in config.hotkey
+def lock_key_enabled(config: Config) -> bool:
+    return config.mode == "hold" and bool(config.lock_key)
+
+
+def lock_key_grabs(config: Config) -> list[Grab]:
+    # The hotkey is still held when the lock key is pressed, so its modifiers are down too.
+    return shortcuts.grabs(config.lock_key, shortcuts.modifier_mask(config.hotkey))
+
+
+def locked_grabs(config: Config) -> list[Grab]:
+    return [*shortcuts.grabs(config.finish_key), *shortcuts.grabs(config.cancel_key)]
 
 
 def describe_error(error: Exception) -> tuple[str, str, bool]:
@@ -161,8 +170,8 @@ class App:
         if self._state is State.IDLE:
             self._pressed_at = time.monotonic()
             self._start()
-            if space_locks(self._config):
-                self._keys.set(SPACE_KEYS)
+            if lock_key_enabled(self._config):
+                self._keys.set(lock_key_grabs(self._config))
         elif self._state is State.RECORDING:
             if self._tap is not None:
                 self._lock()
@@ -177,11 +186,11 @@ class App:
         else:
             self._finish()
 
-    def on_space(self) -> None:
-        if self._state is State.RECORDING and not self._locked and space_locks(self._config):
+    def on_lock_key(self) -> None:
+        if self._state is State.RECORDING and not self._locked and lock_key_enabled(self._config):
             self._lock()
 
-    def on_enter(self) -> None:
+    def on_finish_key(self) -> None:
         if self._state is State.RECORDING and self._locked:
             self._finish()
 
@@ -199,7 +208,7 @@ class App:
         log.info("dictation locked")
         self._cancel_tap()
         self._locked = True
-        self._keys.set(LOCKED_KEYS)
+        self._keys.set(locked_grabs(self._config))
         self._ui.locked()
 
     def _unlock(self) -> None:
@@ -211,7 +220,7 @@ class App:
         self._unlock()
         self._finishing = asyncio.create_task(self._finish_recording())
 
-    def on_escape(self) -> None:
+    def on_cancel_key(self) -> None:
         if self._task and self._state is not State.IDLE:
             log.info("dictation cancelled")
             self._task.cancel()
@@ -219,7 +228,7 @@ class App:
     def pause(self) -> None:
         """Cancels any dictation and ignores the hotkey, e.g. while the settings window is open."""
         self.paused = True
-        self.on_escape()
+        self.on_cancel_key()
 
     def resume(self) -> None:
         self.paused = False
@@ -391,7 +400,9 @@ def run_app(
         on_settings=show_settings,
         max_lines=config.max_lines,
         hold=config.mode == "hold",
-        space_locks=space_locks(config),
+        lock_key=config.lock_key if lock_key_enabled(config) else "",
+        finish_key=config.finish_key,
+        cancel_key=config.cancel_key,
     )
     ui = OverlayBridge(overlay)
     app = App(config, api_key, ui, cleanup, output, recent.default_recent_path(), KeyGrab())
@@ -406,11 +417,18 @@ def run_app(
         config.hotkey,
         on_down=dispatch(app.on_hotkey_down),
         on_up=dispatch(app.on_hotkey_up),
-        on_escape=dispatch(app.on_escape),
-        on_enter=dispatch(app.on_enter),
-        on_space=dispatch(app.on_space),
+        shortcuts=[
+            (config.lock_key, dispatch(app.on_lock_key)),
+            (config.finish_key, dispatch(app.on_finish_key)),
+            (config.cancel_key, dispatch(app.on_cancel_key)),
+        ],
     )
     hotkeys.start()
+    # A hotkey such as F9 would otherwise also reach the focused app.
+    hotkey_grab = KeyGrab()
+    hotkey_grabs = shortcuts.grabs(config.hotkey)
+    if hotkey_grabs and hotkey_grab.keep(hotkey_grabs):
+        log.warning("another app already uses %s", shortcuts.describe(config.hotkey))
 
     for signal_number in (signal.SIGINT, signal.SIGTERM):
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal_number, Gtk.main_quit)

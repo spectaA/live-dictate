@@ -16,9 +16,11 @@ class Recorder:
             spec,
             on_down=lambda: self.events.append("down"),
             on_up=lambda: self.events.append("up"),
-            on_escape=lambda: self.events.append("esc"),
-            on_enter=lambda: self.events.append("enter"),
-            on_space=lambda: self.events.append("space"),
+            shortcuts=[
+                ("<space>", lambda: self.events.append("lock")),
+                ("<enter>", lambda: self.events.append("finish")),
+                ("<esc>", lambda: self.events.append("cancel")),
+            ],
         )
 
 
@@ -65,14 +67,31 @@ def test_escape_is_reported() -> None:
     recorder = Recorder()
     hotkey = recorder.listener("<ctrl_r>")
     hotkey._press(Key.esc)
-    assert recorder.events == ["esc"]
+    assert recorder.events == ["cancel"]
 
 
 def test_both_enter_keys_are_reported() -> None:
     recorder = Recorder()
     hotkey = recorder.listener("<ctrl_r>")
     hotkey._press(Key.enter)
+    hotkey._release(Key.enter)
     hotkey._press(KeyCode.from_vk(0xFF8D))
+    hotkey._release(KeyCode.from_vk(0xFF8D))
     hotkey._press(KeyCode.from_char("a"))
     hotkey._press(Key.space)
-    assert recorder.events == ["enter", "enter", "space"]
+    assert recorder.events == ["finish", "finish", "lock"]
+
+
+def test_shortcut_combination_fires_once_all_keys_are_down() -> None:
+    events: list[str] = []
+    hotkey = HotkeyListener(
+        "<f9>",
+        on_down=lambda: events.append("down"),
+        on_up=lambda: events.append("up"),
+        shortcuts=[("<ctrl>+<enter>", lambda: events.append("finish")), ("", lambda: None)],
+    )
+    hotkey._press(Key.enter)
+    hotkey._release(Key.enter)
+    hotkey._press(Key.ctrl_l)
+    hotkey._press(Key.enter)
+    assert events == ["finish"]

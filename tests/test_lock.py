@@ -7,9 +7,17 @@ from typing import Any
 import pytest
 from websockets.exceptions import InvalidStatus
 
-from live_dictate.app import DOUBLE_TAP_S, App, State, describe_error, space_locks
+from live_dictate.app import (
+    DOUBLE_TAP_S,
+    App,
+    State,
+    describe_error,
+    lock_key_enabled,
+    lock_key_grabs,
+    locked_grabs,
+)
 from live_dictate.config import Config
-from live_dictate.keygrab import LOCKED_KEYS, SPACE_KEYS
+from live_dictate.keygrab import Grab
 from live_dictate.transcriber import TranscriptionError
 
 
@@ -23,10 +31,11 @@ class Ui:
 
 class Keys:
     def __init__(self) -> None:
-        self.grabs: list[tuple[int, ...]] = []
+        self.grabs: list[tuple[Grab, ...]] = []
 
-    def set(self, keysyms: Iterable[int]) -> None:
-        self.grabs.append(tuple(keysyms))
+    def set(self, grabs: Iterable[Grab]) -> int:
+        self.grabs.append(tuple(grabs))
+        return 0
 
 
 def _app(monkeypatch: pytest.MonkeyPatch, **config: Any) -> tuple[App, Ui, Keys]:
@@ -38,6 +47,11 @@ def _app(monkeypatch: pytest.MonkeyPatch, **config: Any) -> tuple[App, Ui, Keys]
     ui, keys = Ui(), Keys()
     app = App(Config(**config), "key", ui, False, print, None, keys)  # type: ignore[arg-type]
     return app, ui, keys
+
+
+CONFIG = Config()
+LOCK_GRABS = tuple(lock_key_grabs(CONFIG))
+LOCKED_GRABS = tuple(locked_grabs(CONFIG))
 
 
 def _run(scenario: Callable[[], Any]) -> None:
@@ -60,7 +74,7 @@ def test_long_press_pastes_on_release(monkeypatch: pytest.MonkeyPatch) -> None:
     _run(scenario)
     assert app._state is State.FINALIZING
     assert "locked" not in ui.calls
-    assert keys.grabs == [SPACE_KEYS, ()]
+    assert keys.grabs == [LOCK_GRABS, ()]
 
 
 def test_double_tap_locks_until_enter(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -73,8 +87,8 @@ def test_double_tap_locks_until_enter(monkeypatch: pytest.MonkeyPatch) -> None:
         app.on_hotkey_up()
         await asyncio.sleep(DOUBLE_TAP_S + 0.05)
         assert app._state is State.RECORDING
-        assert keys.grabs[-1] == LOCKED_KEYS
-        app.on_enter()
+        assert keys.grabs[-1] == LOCKED_GRABS
+        app.on_finish_key()
         await asyncio.sleep(0)
 
     _run(scenario)
@@ -103,15 +117,15 @@ def test_space_locks_a_dictation_in_progress(monkeypatch: pytest.MonkeyPatch) ->
     async def scenario() -> None:
         app.on_hotkey_down()
         app._pressed_at -= 60
-        app.on_space()
+        app.on_lock_key()
         app.on_hotkey_up()
         assert app._state is State.RECORDING
-        app.on_enter()
+        app.on_finish_key()
         await asyncio.sleep(0)
 
     _run(scenario)
     assert "locked" in ui.calls
-    assert keys.grabs == [SPACE_KEYS, LOCKED_KEYS, ()]
+    assert keys.grabs == [LOCK_GRABS, LOCKED_GRABS, ()]
 
 
 def test_hotkey_press_also_finishes_a_locked_dictation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -119,7 +133,7 @@ def test_hotkey_press_also_finishes_a_locked_dictation(monkeypatch: pytest.Monke
 
     async def scenario() -> None:
         app.on_hotkey_down()
-        app.on_space()
+        app.on_lock_key()
         app.on_hotkey_up()
         app.on_hotkey_down()
         await asyncio.sleep(0)
@@ -133,8 +147,8 @@ def test_toggle_mode_never_locks(monkeypatch: pytest.MonkeyPatch) -> None:
 
     async def scenario() -> None:
         app.on_hotkey_down()
-        app.on_space()
-        app.on_enter()
+        app.on_lock_key()
+        app.on_finish_key()
         assert app._state is State.RECORDING
         app.on_hotkey_down()
         await asyncio.sleep(0)
@@ -145,10 +159,21 @@ def test_toggle_mode_never_locks(monkeypatch: pytest.MonkeyPatch) -> None:
     assert all(grab == () for grab in keys.grabs)
 
 
-def test_space_does_not_lock_when_it_is_part_of_the_hotkey() -> None:
-    assert space_locks(Config())
-    assert not space_locks(Config(hotkey="<ctrl>+<alt>+<space>"))
-    assert not space_locks(Config(mode="toggle"))
+def test_lock_key_needs_hold_mode_and_a_key() -> None:
+    assert lock_key_enabled(Config())
+    assert not lock_key_enabled(Config(lock_key=""))
+    assert not lock_key_enabled(Config(mode="toggle"))
+
+
+def test_lock_key_is_grabbed_with_the_hotkey_modifiers() -> None:
+    from Xlib import XK, X
+
+    assert ((XK.XK_space, X.ControlMask),) == LOCK_GRABS
+    assert (XK.XK_KP_Enter, 0) in LOCKED_GRABS
+    assert (XK.XK_Escape, 0) in LOCKED_GRABS
+    config = Config(hotkey="<f9>", lock_key="l", finish_key="<ctrl>+<enter>")
+    assert lock_key_grabs(config) == [(XK.XK_l, 0)]
+    assert (XK.XK_Return, X.ControlMask) in locked_grabs(config)
 
 
 class Response:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, Iterable
+from collections.abc import Callable, Hashable, Iterable, Sequence
 from threading import Lock, Timer
 
 from pynput import keyboard
@@ -18,9 +18,7 @@ def key_id(key: keyboard.Key | keyboard.KeyCode) -> tuple[str, object]:
     return ("vk", code.vk)
 
 
-def _is_enter(key: Hashable) -> bool:
-    if key == keyboard.Key.enter:
-        return True
+def _is_keypad_enter(key: Hashable) -> bool:
     return isinstance(key, keyboard.KeyCode) and key.vk == KEYPAD_ENTER_VK
 
 
@@ -51,40 +49,39 @@ class ComboTracker:
 
 
 class HotkeyListener:
+    """Reports the hotkey's press and release, and each press of the other `shortcuts`."""
+
     def __init__(
         self,
         spec: str,
         on_down: Callable[[], None],
         on_up: Callable[[], None],
-        on_escape: Callable[[], None],
-        on_enter: Callable[[], None] | None = None,
-        on_space: Callable[[], None] | None = None,
+        shortcuts: Sequence[tuple[str, Callable[[], None]]] = (),
     ) -> None:
         self._on_down = on_down
         self._on_up = on_up
-        self._on_escape = on_escape
-        self._on_enter = on_enter
-        self._on_space = on_space
         self._lock = Lock()
         self._pending_up: Timer | None = None
         self._listener = keyboard.Listener(on_press=self._press, on_release=self._release)
-        targets = [key_id(key) for key in keyboard.HotKey.parse(spec)]
-        self._tracker = ComboTracker(targets, self._normalize)
+        self._tracker = self._track(spec)
+        self._shortcuts = [(self._track(other), action) for other, action in shortcuts if other]
+
+    def _track(self, spec: str) -> ComboTracker:
+        return ComboTracker([key_id(key) for key in keyboard.HotKey.parse(spec)], self._normalize)
 
     def _normalize(self, key: Hashable) -> set[Hashable]:
         # pynput reports None for keys without a keysym.
         if key is None:
             return set()
+        if _is_keypad_enter(key):
+            key = keyboard.Key.enter
         # `<ctrl_r>` must match only the right key, while `<ctrl>` must match either side.
         return {key_id(key), key_id(self._listener.canonical(key))}
 
     def _press(self, key: Hashable) -> None:
-        if key == keyboard.Key.esc:
-            self._on_escape()
-        elif self._on_enter and _is_enter(key):
-            self._on_enter()
-        elif self._on_space and key == keyboard.Key.space:
-            self._on_space()
+        for tracker, action in self._shortcuts:
+            if tracker.press(key):
+                action()
         if not self._tracker.press(key):
             return
         with self._lock:
@@ -95,6 +92,8 @@ class HotkeyListener:
         self._on_down()
 
     def _release(self, key: Hashable) -> None:
+        for tracker, _action in self._shortcuts:
+            tracker.release(key)
         if not self._tracker.release(key):
             return
         # X11 autorepeat on a held non-modifier key emits release+press pairs.

@@ -95,4 +95,13 @@ La réunion de jeudi est décalée, car le client n'a pas encore validé la maqu
 I think we should move the deploy, because the tests are still red.
 """
 
+DICTIONARY = """
+The speaker's dictionary lists words they use often, one per line. When the transcript contains
+one of these words, or a word that sounds like one, write it exactly as listed: same spelling,
+capitalization and spacing. Never add a dictionary word that was not said.
+<dictionary>
+{words}
+</dictionary>
+"""
+
 INSTRUCTIONS = {"light": LIGHT, "standard": STANDARD, "polished": POLISHED}

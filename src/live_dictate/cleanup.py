@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 
 from .config import Config
-from .prompts import INSTRUCTIONS
+from .prompts import DICTIONARY, INSTRUCTIONS
 
 RESPONSES_URL = "https://api.openai.com/v1/responses"
 
@@ -32,10 +32,18 @@ def needs_cleanup(transcript: str, min_words: int) -> bool:
     return len(transcript.split()) >= min_words
 
 
+def build_instructions(config: Config) -> str:
+    instructions = INSTRUCTIONS[config.effective_cleanup_style]
+    if not config.keywords:
+        return instructions
+    # Appended last so the fixed instructions stay a cacheable prefix.
+    return instructions + DICTIONARY.format(words="\n".join(config.keywords))
+
+
 def build_request(config: Config, transcript: str) -> dict[str, Any]:
     return {
         "model": config.cleanup_model,
-        "instructions": INSTRUCTIONS[config.effective_cleanup_style],
+        "instructions": build_instructions(config),
         "input": f"<transcript>\n{transcript}\n</transcript>",
         "reasoning": {"effort": "none"},
         "service_tier": config.cleanup_service_tier,

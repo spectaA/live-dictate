@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-29
+
+### Added
+
+- Shortcuts tab in the settings. Every key can be changed: dictate, lock while holding, finish and cancel. A shortcut can be one key, a modifier alone or a combination.
+- The Shortcuts tab warns when two shortcuts overlap, and when another app already uses one, such as a launcher on Ctrl+Space.
+- Dictionary tab in the settings, for words that must be spelled exactly. The cleanup now receives the list too, not only the transcription.
+- `lock_key`, `finish_key` and `cancel_key` settings.
+
+### Changed
+
+- The hotkey and the mode moved from the General tab to the Shortcuts tab.
+- A hotkey with a regular key, such as F9, no longer reaches the focused app.
+- The overlay shows the configured keys.
+- Saving refuses a configuration the daemon could not load.
+
 ## [0.5.1] - 2026-10-28
 
 ### Fixed
@@ -100,7 +116,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `live-dictate update` to install the latest release with checksum verification.
 - Debian package with a systemd user service, built and published by GitHub Actions.
 
-[Unreleased]: https://github.com/spectaA/live-dictate/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/spectaA/live-dictate/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/spectaA/live-dictate/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/spectaA/live-dictate/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/spectaA/live-dictate/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/spectaA/live-dictate/compare/v0.4.0...v0.4.1

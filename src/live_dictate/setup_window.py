@@ -6,6 +6,7 @@ import threading
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -19,9 +20,10 @@ gi.require_version("Pango", "1.0")
 gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, Gio, GLib, Gtk, Pango, PangoCairo  # noqa: E402
 
-from . import aura, history, recent  # noqa: E402
+from . import aura, history, recent, shortcuts  # noqa: E402
 from .accent import resolve_accent  # noqa: E402
 from .config import (  # noqa: E402
+    KEYWORD_FORBIDDEN,
     MAX_LINES_LIMIT,
     Config,
     default_config_path,
@@ -32,6 +34,7 @@ from .config import (  # noqa: E402
     update_config_file,
 )
 from .history import format_duration  # noqa: E402
+from .keygrab import is_free  # noqa: E402
 from .textflow import STRIKE_S, removal_markup, removed_word_indices  # noqa: E402
 
 API_KEYS_URL = "https://platform.openai.com/api-keys"
@@ -52,13 +55,6 @@ LANGUAGES = [
     ("uk", "Українська"),
     ("ja", "日本語"),
     ("zh", "中文"),
-]
-
-HOTKEYS = [
-    ("<ctrl_r>", "Right Ctrl"),
-    ("<pause>", "Pause"),
-    ("<f9>", "F9"),
-    ("<ctrl>+<alt>+<space>", "Ctrl + Alt + Space"),
 ]
 
 ACCENT_PRESETS = [
@@ -132,6 +128,17 @@ radiobutton.ld-option:checked { border-color: @theme_selected_bg_color; }
     padding: 10px 12px;
 }
 .ld-stat-value { font-size: 15pt; font-weight: bold; }
+.ld-key {
+    background-color: alpha(@theme_fg_color, 0.1);
+    border: 1px solid alpha(@theme_fg_color, 0.15);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    padding: 0 7px;
+    font-weight: bold;
+    font-size: 9pt;
+}
+.ld-capturing { box-shadow: inset 0 0 0 2px @theme_selected_bg_color; }
+.ld-warning { color: #f5b450; }
 .ld-recent {
     background-color: alpha(@theme_fg_color, 0.04);
     border-radius: 8px;
@@ -547,6 +554,293 @@ class RecoveryPage(Gtk.Box):
         return row
 
 
+class ShortcutButton(Gtk.Button):
+    """Shows a shortcut as keycaps; a click captures the next keys pressed."""
+
+    def __init__(self, spec: str, on_change: Callable[[], None]) -> None:
+        super().__init__(hexpand=True)
+        self.spec = spec
+        self._on_change = on_change
+        self._capturing = False
+        self._pressed: list[str] = []
+        self._keys = Gtk.Box(spacing=4)
+        self.add(self._keys)
+        self.connect("clicked", self._on_clicked)
+        self.connect("key-press-event", self._on_key_press)
+        self.connect("key-release-event", self._on_key_release)
+        self.connect("focus-out-event", lambda _button, _event: self._stop())
+        self._show()
+
+    def set_spec(self, spec: str) -> None:
+        self.spec = spec
+        self._show()
+        self._on_change()
+
+    def _show(self, keys: list[str] | None = None) -> None:
+        for child in self._keys.get_children():
+            child.destroy()
+        # Keys being captured show as the shortcut they will become, e.g. Ctrl, not Left Ctrl.
+        spec = self.spec if keys is None else shortcuts.combine(keys) if keys else ""
+        try:
+            labels = shortcuts.labels(spec)
+        except ValueError:
+            labels = []
+        if self._capturing and not labels:
+            self._keys.pack_start(_label("Press the keys…", dim=True), False, False, 0)
+        elif not labels:
+            self._keys.pack_start(_label("None", dim=True), False, False, 0)
+        for index, text in enumerate(labels):
+            if index:
+                self._keys.pack_start(_label("+", dim=True), False, False, 0)
+            key = Gtk.Label(label=text)
+            key.get_style_context().add_class("ld-key")
+            self._keys.pack_start(key, False, False, 0)
+        self._keys.show_all()
+
+    def _on_clicked(self, _button: Gtk.Button) -> None:
+        if self._capturing:
+            self._stop()
+            return
+        self._capturing = True
+        self._pressed = []
+        self.get_style_context().add_class("ld-capturing")
+        window = self.get_window()
+        if window:
+            # An active grab keeps desktop shortcuts, such as Ctrl+Space, from firing meanwhile.
+            seat = window.get_display().get_default_seat()
+            seat.grab(window, Gdk.SeatCapabilities.KEYBOARD, False, None, None, None)
+        self._show([])
+
+    def _stop(self) -> bool:
+        if self._capturing:
+            self._capturing = False
+            self.get_style_context().remove_class("ld-capturing")
+            Gdk.Display.get_default().get_default_seat().ungrab()
+            self._show()
+        return False
+
+    def _on_key_press(self, _button: Gtk.Button, event: Gdk.EventKey) -> bool:
+        if not self._capturing:
+            return False
+        codepoint = Gdk.keyval_to_unicode(event.keyval)
+        key = shortcuts.key_from_keysym(
+            Gdk.keyval_name(event.keyval) or "", chr(codepoint) if codepoint else ""
+        )
+        if key and key not in self._pressed:
+            self._pressed.append(key)
+            self._show(self._pressed)
+        # Enter must not activate the Save button while it is being captured.
+        return True
+
+    def _on_key_release(self, _button: Gtk.Button, _event: Gdk.EventKey) -> bool:
+        if not self._capturing:
+            return False
+        if self._pressed:
+            try:
+                spec = shortcuts.combine(self._pressed)
+                shortcuts.parse(spec)
+            except ValueError:
+                self._pressed = []
+                self._show([])
+                return True
+            self._stop()
+            self.set_spec(spec)
+        return True
+
+
+def _icon_button(icon: str, tooltip: str, action: Callable[[], None]) -> Gtk.Button:
+    button = Gtk.Button.new_from_icon_name(icon, Gtk.IconSize.BUTTON)
+    button.set_relief(Gtk.ReliefStyle.NONE)
+    button.set_tooltip_text(tooltip)
+    button.set_valign(Gtk.Align.CENTER)
+    button.connect("clicked", lambda _button: action())
+    return button
+
+
+SHORTCUT_ROWS = [
+    ("hotkey", "Dictate"),
+    ("lock_key", "Lock while holding"),
+    ("finish_key", "Finish a locked dictation"),
+    ("cancel_key", "Cancel"),
+]
+
+
+class ShortcutsPage(Gtk.Grid):
+    def __init__(self, config: Config, on_change: Callable[[], None]) -> None:
+        super().__init__(row_spacing=8, column_spacing=16, margin=24)
+        self._saved_hotkey = config.hotkey
+        self._on_change = on_change
+        self.problem: str | None = None
+        self.mode = _combo(MODES, config.mode)
+        self.mode.connect("changed", lambda _combo: self._refresh())
+        _add_row(self, 0, "Mode", self.mode)
+        self.attach(Gtk.Separator(margin_top=4, margin_bottom=4), 0, 1, 2, 1)
+        defaults = Config()
+        self.buttons: dict[str, ShortcutButton] = {}
+        self._warnings: dict[str, Gtk.Label] = {}
+        self._rows: dict[str, Gtk.Box] = {}
+        for index, (name, title) in enumerate(SHORTCUT_ROWS):
+            button = ShortcutButton(getattr(config, name), self._refresh)
+            row = Gtk.Box(spacing=4)
+            row.pack_start(button, True, True, 0)
+            if name == "lock_key":
+                row.pack_start(
+                    _icon_button(
+                        "edit-clear-symbolic", "No shortcut", partial(button.set_spec, "")
+                    ),
+                    False,
+                    False,
+                    0,
+                )
+            default = getattr(defaults, name)
+            reset = _icon_button(
+                "edit-undo-symbolic",
+                f"Reset to {shortcuts.describe(default)}",
+                partial(button.set_spec, default),
+            )
+            row.pack_start(reset, False, False, 0)
+            _add_row(self, 2 + 2 * index, title, row)
+            warning = _label()
+            warning.get_style_context().add_class("ld-warning")
+            warning.set_no_show_all(True)
+            self.attach(warning, 1, 3 + 2 * index, 1, 1)
+            self.buttons[name] = button
+            self._warnings[name] = warning
+            self._rows[name] = row
+        note = _label(
+            "Click a shortcut, then press a key or a combination. A modifier alone works too, "
+            "such as Right Ctrl. Double-tapping the dictate shortcut also locks.",
+            dim=True,
+        )
+        note.set_margin_top(4)
+        self.attach(note, 1, 2 + 2 * len(SHORTCUT_ROWS), 1, 1)
+        self._check()
+
+    @property
+    def values(self) -> dict[str, str]:
+        return {"mode": self.mode.get_active_id(), **{n: b.spec for n, b in self.buttons.items()}}
+
+    def _warning_for(self, name: str, specs: dict[str, str]) -> str | None:
+        spec = specs[name]
+        for other, title in SHORTCUT_ROWS:
+            if other == name:
+                break
+            if shortcuts.overlaps(spec, specs[other]):
+                return f"Overlaps with the {title.lower()} shortcut."
+        if not spec or (name == "hotkey" and spec == self._saved_hotkey):
+            return None
+        if name == "lock_key":
+            hotkey = specs["hotkey"]
+            held = [k for k in shortcuts.parse(hotkey) if k in shortcuts.MODIFIERS]
+            grabs = shortcuts.grabs(spec, shortcuts.modifier_mask(hotkey))
+            if grabs and not is_free(grabs):
+                if not held:
+                    return "Another app already uses this shortcut."
+                combined = shortcuts.describe(shortcuts.combine([*held, *shortcuts.parse(spec)]))
+                return (
+                    f"With {shortcuts.describe(hotkey)} held, this is {combined}. "
+                    "Another app already uses it, so it may open that app."
+                )
+            return None
+        grabs = shortcuts.grabs(spec)
+        if grabs and not is_free(grabs):
+            return "Another app already uses this shortcut."
+        return None
+
+    def _refresh(self) -> None:
+        self._check()
+        self._on_change()
+
+    def _check(self) -> None:
+        specs = {name: button.spec for name, button in self.buttons.items()}
+        self._rows["lock_key"].set_sensitive(self.mode.get_active_id() == "hold")
+        self.problem = None
+        for name, _title in SHORTCUT_ROWS:
+            message = self._warning_for(name, specs)
+            warning = self._warnings[name]
+            warning.set_text(message or "")
+            warning.set_visible(bool(message))
+            if message and message.startswith("Overlaps") and self.problem is None:
+                self.problem = "Two shortcuts overlap: change one of them to save."
+
+
+class DictionaryPage(Gtk.Box):
+    def __init__(self, words: list[str]) -> None:
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin=24)
+        self.words = list(words)
+        self.pack_start(
+            _label(
+                "Words you use often, spelled exactly as they must appear. The transcription "
+                "and the cleanup both receive this list.",
+                dim=True,
+            ),
+            False,
+            False,
+            0,
+        )
+        add_row = Gtk.Box(spacing=8)
+        self.entry = Gtk.Entry(hexpand=True, placeholder_text="Add a word, such as Coolify")
+        self.entry.connect("activate", lambda _entry: self.add_word())
+        add_row.pack_start(self.entry, True, True, 0)
+        add = Gtk.Button(label="Add")
+        add.connect("clicked", lambda _button: self.add_word())
+        add_row.pack_start(add, False, False, 0)
+        self.pack_start(add_row, False, False, 0)
+        self._message = _label()
+        self._message.get_style_context().add_class("ld-warning")
+        self._message.set_no_show_all(True)
+        self.pack_start(self._message, False, False, 0)
+        self._list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self._list.get_style_context().add_class("frame")
+        scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
+        scroller.set_min_content_height(RECOVERY_HEIGHT - 120)
+        scroller.add(self._list)
+        self.pack_start(scroller, True, True, 0)
+        self._count = _label(dim=True)
+        self.pack_start(self._count, False, False, 0)
+        self._render()
+
+    def _say(self, message: str) -> None:
+        self._message.set_text(message)
+        self._message.set_visible(bool(message))
+
+    def add_word(self) -> None:
+        word = self.entry.get_text().strip()
+        if not word:
+            return
+        if any(char in word for char in KEYWORD_FORBIDDEN):
+            self._say("A word cannot contain < or >.")
+            return
+        if word.lower() in {known.lower() for known in self.words}:
+            self._say(f"{word} is already in the dictionary.")
+            return
+        self.words.append(word)
+        self.entry.set_text("")
+        self._say("")
+        self._render()
+
+    def remove_word(self, word: str) -> None:
+        self.words.remove(word)
+        self._render()
+
+    def _render(self) -> None:
+        for row in self._list.get_children():
+            row.destroy()
+        for word in sorted(self.words, key=str.lower):
+            line = Gtk.Box(spacing=8, margin_start=12, margin_end=6, margin_top=2, margin_bottom=2)
+            line.pack_start(_label(word), True, True, 0)
+            line.pack_end(
+                _icon_button("window-close-symbolic", "Remove", partial(self.remove_word, word)),
+                False,
+                False,
+                0,
+            )
+            self._list.add(line)
+        self._list.show_all()
+        count = len(self.words)
+        self._count.set_text("No words yet." if not count else f"{count} word{'s' * (count > 1)}")
+
+
 class SetupWindow(Gtk.Window):
     def __init__(
         self,
@@ -570,6 +864,10 @@ class SetupWindow(Gtk.Window):
 
         self._stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE)
         self._stack.add_titled(self._general_page(), "general", "General")
+        self.shortcuts = ShortcutsPage(config, self._update_save)
+        self._stack.add_titled(self.shortcuts, "shortcuts", "Shortcuts")
+        self.dictionary = DictionaryPage(config.keywords)
+        self._stack.add_titled(self.dictionary, "dictionary", "Dictionary")
         self._stack.add_titled(self._cleanup_page(), "cleanup", "Cleanup")
         self._stack.add_titled(self._appearance_page(), "appearance", "Appearance")
         self.history = HistoryPage(config, history_path or default_history_path())
@@ -626,16 +924,12 @@ class SetupWindow(Gtk.Window):
         language = self._config.languages[0] if self._config.languages else ""
         self._language = _combo(LANGUAGES, language)
         _add_row(grid, 2, "Language", self._language)
-        self._hotkey = _combo(HOTKEYS, self._config.hotkey)
-        _add_row(grid, 3, "Hotkey", self._hotkey)
-        self._mode = _combo(MODES, self._config.mode)
-        _add_row(grid, 4, "Mode", self._mode)
         note = _label(
             markup=f'Get a key on <a href="{API_KEYS_URL}">platform.openai.com</a>. '
             "live-dictate checks it before saving.",
             dim=True,
         )
-        grid.attach(note, 1, 5, 1, 1)
+        grid.attach(note, 1, 3, 1, 1)
         return grid
 
     def _replace_key(self, key_area: Gtk.Stack) -> None:
@@ -701,8 +995,11 @@ class SetupWindow(Gtk.Window):
         return next(style for style, button in self._styles.items() if button.get_active())
 
     def _set_busy(self, busy: bool, message: str = "") -> None:
-        self._save.set_sensitive(not busy)
+        self._save.set_sensitive(not busy and self.shortcuts.problem is None)
         self._status.set_text(message)
+
+    def _update_save(self) -> None:
+        self._set_busy(False, self.shortcuts.problem or "")
 
     def _on_save(self, _button: Gtk.Button) -> None:
         key = self._key.get_text().strip()
@@ -738,8 +1035,8 @@ class SetupWindow(Gtk.Window):
                 self._config_path,
                 {
                     "languages": [language] if language else [],
-                    "hotkey": self._hotkey.get_active_id(),
-                    "mode": self._mode.get_active_id(),
+                    **self.shortcuts.values,
+                    "keywords": self.dictionary.words,
                     "accent_color": self._accent.value,
                     "max_lines": self._max_lines.get_value_as_int(),
                     "cleanup_enabled": True,

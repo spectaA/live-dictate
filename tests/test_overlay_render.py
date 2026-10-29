@@ -82,11 +82,11 @@ def test_locked_overlay_shows_how_to_finish() -> None:
 
     overlay = Overlay(on_settings=lambda: None)
     overlay.listening()
-    assert {"space", "hint", "esc", "settings"} <= overlay.view.visible_parts()
+    assert {"lock", "hint", "cancel", "settings"} <= overlay.view.visible_parts()
     overlay.locked()
     parts = overlay.view.visible_parts()
-    assert {"badge", "enter", "esc", "settings"} <= parts
-    assert not parts & {"space", "hint", "eq"}
+    assert {"badge", "finish_keys", "cancel", "settings"} <= parts
+    assert not parts & {"lock", "hint", "eq"}
     overlay.hide()
     overlay._window.destroy()
 
@@ -96,7 +96,7 @@ def test_toggle_mode_has_no_lock_hint() -> None:
 
     overlay = Overlay(hold=False)
     overlay.listening()
-    assert "space" not in overlay.view.visible_parts()
+    assert "lock" not in overlay.view.visible_parts()
     assert overlay.view.hint.get_text() == TOGGLE_HINT
     overlay._window.destroy()
 
@@ -149,4 +149,25 @@ def test_overlay_without_settings_hides_the_gear() -> None:
     overlay = Overlay()
     overlay.listening()
     assert not overlay.view.settings.get_visible()
+    overlay._window.destroy()
+
+
+def test_keycaps_follow_the_configured_shortcuts() -> None:
+    from live_dictate.overlay import Overlay
+
+    overlay = Overlay(lock_key="l", finish_key="<ctrl>+<enter>", cancel_key="<f8>")
+    view = overlay.view
+    finish = [keycap.label for keycap in view.finish_keys.get_children()]
+    assert finish == ["Ctrl", "Enter"]
+    assert [keycap.label for keycap in view.cancel.get_children()] == ["F8"]
+    assert view.lock.get_tooltip_text() == "Press L while holding the hotkey to lock"
+    overlay._window.destroy()
+
+
+def test_no_lock_key_hides_the_reminder() -> None:
+    from live_dictate.overlay import Overlay
+
+    overlay = Overlay(lock_key="")
+    overlay.listening()
+    assert "lock" not in overlay.view.visible_parts()
     overlay._window.destroy()

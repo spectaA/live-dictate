@@ -14,7 +14,7 @@ gi.require_version("Pango", "1.0")
 gi.require_version("PangoCairo", "1.0")
 from gi.repository import Gdk, GLib, Gtk, Pango, PangoCairo  # noqa: E402
 
-from . import aura  # noqa: E402
+from . import aura, shortcuts  # noqa: E402
 from .accent import hex_to_rgb  # noqa: E402
 from .icons import RGB, draw_icon  # noqa: E402
 from .textflow import (  # noqa: E402
@@ -290,12 +290,30 @@ def _styled(widget: Gtk.Widget, name: str) -> Gtk.Widget:
     return widget
 
 
+def _keycaps(spec: str, accent: RGB | None = None) -> Gtk.Box:
+    box = Gtk.Box(spacing=3)
+    if not spec:
+        return box
+    for label in shortcuts.labels(spec):
+        icon = "enter" if label == "Enter" else None
+        box.pack_start(Keycap(label, icon=icon, accent=accent), False, False, 0)
+    return box
+
+
 class OverlayView(Gtk.Box):
-    def __init__(self, accent: RGB, max_lines: int, space_locks: bool, hint: str) -> None:
+    def __init__(
+        self,
+        accent: RGB,
+        max_lines: int,
+        hint: str,
+        lock_key: str = "<space>",
+        finish_key: str = "<enter>",
+        cancel_key: str = "<esc>",
+    ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.max_lines = max_lines
         self.settings_enabled = False
-        self.space_locks = space_locks
+        self.lock_enabled = bool(lock_key)
         _styled(self, "ld-card")
         for side in ("top", "bottom", "start", "end"):
             getattr(self, f"set_margin_{side}")(WINDOW_MARGIN)
@@ -305,13 +323,15 @@ class OverlayView(Gtk.Box):
         self.badge = Badge(accent)
         self.title = _styled(Gtk.Label(), "ld-title")
         self.meta = _styled(Gtk.Label(), "ld-meta")
-        self.space = Gtk.Box(spacing=4)
-        self.space.pack_start(Icon("lock", 11, DIM), False, False, 0)
-        self.space.pack_start(Keycap("Space"), False, False, 0)
-        self.space.set_tooltip_text("Press Space while holding the hotkey to lock")
+        self.lock = Gtk.Box(spacing=4)
+        self.lock.pack_start(Icon("lock", 11, DIM), False, False, 0)
+        self.lock.pack_start(_keycaps(lock_key), False, False, 0)
+        self.lock.set_tooltip_text(
+            f"Press {shortcuts.describe(lock_key)} while holding the hotkey to lock"
+        )
         self.finish = _styled(Gtk.Label(label="finish"), "ld-label")
-        self.enter = Keycap("Enter", icon="enter", accent=accent)
-        self.esc = Keycap("Esc")
+        self.finish_keys = _keycaps(finish_key, accent)
+        self.cancel = _keycaps(cancel_key)
         self.settings = _styled(Gtk.Button(relief=Gtk.ReliefStyle.NONE), "ld-icon-button")
         self.settings.set_tooltip_text("Settings")
         self.settings.set_valign(Gtk.Align.CENTER)
@@ -328,10 +348,10 @@ class OverlayView(Gtk.Box):
         for widget in (
             self.error_button,
             self.settings,
-            self.esc,
-            self.enter,
+            self.cancel,
+            self.finish_keys,
             self.finish,
-            self.space,
+            self.lock,
         ):
             header.pack_end(widget, False, False, 0)
 
@@ -356,10 +376,10 @@ class OverlayView(Gtk.Box):
             "badge": self.badge,
             "title": self.title,
             "meta": self.meta,
-            "space": self.space,
+            "lock": self.lock,
             "finish": self.finish,
-            "enter": self.enter,
-            "esc": self.esc,
+            "finish_keys": self.finish_keys,
+            "cancel": self.cancel,
             "settings": self.settings,
             "error_button": self.error_button,
             "text": self.text,
@@ -378,8 +398,8 @@ class OverlayView(Gtk.Box):
     def show_parts(self, parts: Parts) -> None:
         if not self.settings_enabled:
             parts = parts - {"settings", "error_button"}
-        if not self.space_locks:
-            parts = parts - {"space"}
+        if not self.lock_enabled:
+            parts = parts - {"lock"}
         for name, widget in self._parts.items():
             widget.set_visible(name in parts)
 
@@ -421,7 +441,9 @@ class Overlay:
         on_settings: Callable[[], None] | None = None,
         max_lines: int = DEFAULT_MAX_LINES,
         hold: bool = True,
-        space_locks: bool = True,
+        lock_key: str = "<space>",
+        finish_key: str = "<enter>",
+        cancel_key: str = "<esc>",
     ) -> None:
         install_css()
         self._accent = hex_to_rgb(accent or NEUTRAL_COLOR)
@@ -442,7 +464,14 @@ class Overlay:
         self._window.connect("draw", self._draw)
 
         hint = HOLD_HINT if hold else TOGGLE_HINT
-        self.view = OverlayView(self._accent, max_lines, hold and space_locks, hint)
+        self.view = OverlayView(
+            self._accent,
+            max_lines,
+            hint,
+            lock_key if hold else "",
+            finish_key,
+            cancel_key,
+        )
         self._on_settings = on_settings
         if on_settings:
             self.view.settings_enabled = True
@@ -606,14 +635,14 @@ class Overlay:
         self._started = time.monotonic()
         self.view.chip.configure("mic", self._accent)
         self.view.meta.set_text(format_timer(0))
-        self._enter("listening", {"eq", "meta", "space", "esc", "settings", "hint"}, "accent")
+        self._enter("listening", {"eq", "meta", "lock", "cancel", "settings", "hint"}, "accent")
         self._show()
 
     def locked(self) -> None:
         if self._mode != "listening":
             return
         self.view.chip.configure("lock", self._accent)
-        parts = self._live_parts({"badge", "meta", "finish", "enter", "esc", "settings"})
+        parts = self._live_parts({"badge", "meta", "finish", "finish_keys", "cancel", "settings"})
         self._enter("locked", parts, "accent")
 
     def level(self, value: float) -> None:
@@ -630,7 +659,7 @@ class Overlay:
         self.view.title.set_text("Cleaning up")
         if self._words.words:
             self.view.show_markup(self._tail_markup(self._words.words))
-        self._enter("cleaning", self._live_parts({"title", "esc", "sweep"}), "cleaning")
+        self._enter("cleaning", self._live_parts({"title", "cancel", "sweep"}), "cleaning")
 
     def finished(self, raw: str, final: str) -> None:
         """Animates the words the cleanup removed, confirms the paste, then hides."""
