@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-17
+
+### Fixed
+
+- Dictation no longer fails with "timed out during opening handshake" on networks with a broken IPv6 route. The connection now falls back to IPv4 within a quarter of a second.
+
 ## [0.6.0] - 2026-10-29
 
 ### Added
@@ -116,7 +122,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `live-dictate update` to install the latest release with checksum verification.
 - Debian package with a systemd user service, built and published by GitHub Actions.
 
-[Unreleased]: https://github.com/spectaA/live-dictate/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/spectaA/live-dictate/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/spectaA/live-dictate/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/spectaA/live-dictate/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/spectaA/live-dictate/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/spectaA/live-dictate/compare/v0.4.1...v0.5.0

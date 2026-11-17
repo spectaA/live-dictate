@@ -14,6 +14,8 @@ from .config import Config
 
 REALTIME_URL = "wss://api.openai.com/v1/realtime?intent=transcription"
 FINAL_TIMEOUT_S = 10.0
+# Without it, asyncio tries addresses in turn: a dead IPv6 route uses up open_timeout before IPv4.
+HAPPY_EYEBALLS_DELAY_S = 0.25
 
 log = logging.getLogger(__name__)
 
@@ -107,7 +109,12 @@ class LiveTranscriber:
         self.audio_ms = 0
         self.billed_seconds = 0.0
         headers = {"Authorization": f"Bearer {self._api_key}"}
-        ws = await connect(self._url, additional_headers=headers, max_size=None)
+        ws = await connect(
+            self._url,
+            additional_headers=headers,
+            max_size=None,
+            happy_eyeballs_delay=HAPPY_EYEBALLS_DELAY_S,
+        )
         receiver: asyncio.Task[None] | None = None
         try:
             await ws.send(json.dumps(build_session_update(self._config)))

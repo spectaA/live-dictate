@@ -139,3 +139,18 @@ async def test_run_raises_on_error_event() -> None:
             await asyncio.wait_for(transcriber.run(queue), 5)
     finally:
         server.close()
+
+
+async def test_run_races_address_families(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict = {}
+
+    def fake_connect(url: str, **kwargs: object) -> None:
+        captured.update(kwargs)
+        raise OSError("stop after connect")
+
+    monkeypatch.setattr("live_dictate.transcriber.connect", fake_connect)
+    transcriber = LiveTranscriber("key", Config(), lambda _: None)
+    with pytest.raises(OSError, match="stop after connect"):
+        await transcriber.run(asyncio.Queue())
+
+    assert captured["happy_eyeballs_delay"] > 0
